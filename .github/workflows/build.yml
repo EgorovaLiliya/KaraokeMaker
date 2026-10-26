@@ -19,7 +19,7 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
       - name: Build release APK
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease
         env:
           VERSION_CODE: ${{ github.run_number }}
       - run: cp app/build/outputs/apk/release/app-release.apk KaraokeMaker.apk
