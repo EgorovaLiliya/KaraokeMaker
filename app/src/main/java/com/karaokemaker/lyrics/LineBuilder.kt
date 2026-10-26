@@ -108,14 +108,15 @@ object LineBuilder {
         var j = m
         while (i > 0 && j > 0) {
             val sub = if (similar(lyricTokens[i - 1].second, asr[j - 1])) 0 else 1
+            // On ties skip trailing lyric words first, so repeated lines (choruses) match their earliest occurrence.
             when (cost[i * w + j]) {
+                cost[(i - 1) * w + j] + 1 -> i--
                 cost[(i - 1) * w + j - 1] + sub -> {
                     val li = lyricTokens[i - 1].first
                     firstWord[li] = j - 1
                     if (lastWord[li] == -1) lastWord[li] = j - 1
                     i--; j--
                 }
-                cost[(i - 1) * w + j] + 1 -> i--
                 else -> j--
             }
         }
