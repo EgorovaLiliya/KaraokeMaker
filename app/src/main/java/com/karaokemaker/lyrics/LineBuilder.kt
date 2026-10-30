@@ -74,8 +74,8 @@ object LineBuilder {
         val total = parts.sumOf { it.length }.toDouble()
         val span = seg.endMs - seg.startMs
         var start = seg.startMs
-        return parts.map { part ->
-            val end = start + (span * part.length / total).toLong()
+        return parts.mapIndexed { i, part ->
+            val end = if (i == parts.lastIndex) seg.endMs else start + (span * part.length / total).toLong()
             LyricLine(start, end, part).also { start = end }
         }
     }
