@@ -213,6 +213,7 @@ fun LibraryScreen(
     draft?.let { d ->
         var title by remember(d) { mutableStateOf(d.title) }
         var artist by remember(d) { mutableStateOf(d.artist) }
+        var language by remember(d) { mutableStateOf(Song.guessLanguage(d.title, d.artist).ifEmpty { Prefs.language }) }
         AlertDialog(
             onDismissRequest = { draft = null },
             title = { Text("Новая песня") },
@@ -221,13 +222,15 @@ fun LibraryScreen(
                     Text("Название и исполнитель нужны, чтобы найти синхронизированный текст.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(artist, { artist = it }, label = { Text("Исполнитель") }, singleLine = true)
                     OutlinedTextField(title, { title = it }, label = { Text("Название") }, singleLine = true)
+                    Text("Язык песни", style = MaterialTheme.typography.bodySmall)
+                    LanguageChips(language) { language = it }
                 }
             },
             confirmButton = {
                 TextButton(
                     enabled = title.isNotBlank(),
                     onClick = {
-                        Processor.import(context, d.uri, d.fileName, title.trim(), artist.trim())
+                        Processor.import(context, d.uri, d.fileName, title.trim(), artist.trim(), language)
                         draft = null
                     },
                 ) { Text("Сделать караоке") }
@@ -327,5 +330,14 @@ private fun SongCard(song: Song, onOpen: () -> Unit, onEdit: () -> Unit) {
             confirmButton = { TextButton(onClick = { confirmDelete = false; SongStore.delete(song.id) }) { Text("Удалить") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Отмена") } },
         )
+    }
+}
+
+@Composable
+fun LanguageChips(value: String, onChange: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("ru" to "Русский", "en" to "English", "" to "Авто").forEach { (code, name) ->
+            androidx.compose.material3.FilterChip(selected = value == code, onClick = { onChange(code) }, label = { Text(name) })
+        }
     }
 }

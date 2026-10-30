@@ -21,13 +21,14 @@ object Mvsep {
     /** [raw] is the whole status response: some algorithms (Whisper) return their result outside `files`. */
     data class Job(val status: String, val message: String, val files: List<StemFile>, val raw: JSONObject? = null)
 
-    fun createJob(token: String, audio: File, sepType: Int, addOpt1: String?): String {
+    /** [options] are the algorithm's extra fields, e.g. add_opt1 → value. */
+    fun createJob(token: String, audio: File, sepType: Int, options: Map<String, String>): String {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("api_token", token)
             .addFormDataPart("sep_type", sepType.toString())
             .addFormDataPart("output_format", "0") // mp3 320 kbps
             .addFormDataPart("is_demo", "0")
-            .apply { if (!addOpt1.isNullOrBlank()) addFormDataPart("add_opt1", addOpt1) }
+            .apply { options.filterValues { it.isNotBlank() }.forEach { (k, v) -> addFormDataPart(k, v) } }
             .addFormDataPart("audiofile", audio.name, audio.asRequestBody("audio/mpeg".toMediaType()))
             .build()
         val req = Request.Builder().url("$BASE/separation/create").post(body).build()

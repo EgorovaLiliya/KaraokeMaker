@@ -36,12 +36,14 @@ object Processor {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
 
-    fun import(context: Context, uri: Uri, displayName: String, title: String, artist: String) {
+    fun import(context: Context, uri: Uri, displayName: String, title: String, artist: String, language: String) {
         val app = context.applicationContext
         val id = UUID.randomUUID().toString().replace("-", "").take(12)
         val ext = displayName.substringAfterLast('.', "mp3").lowercase().take(5).ifBlank { "mp3" }
         val original = "original.$ext"
-        SongStore.save(Song(id = id, title = title, artist = artist, durationMs = 0, originalFile = original, progress = "Копирую файл…"))
+        SongStore.save(
+            Song(id = id, title = title, artist = artist, durationMs = 0, originalFile = original, language = language, progress = "Копирую файл…")
+        )
         start(id) {
             val target = File(SongStore.dir(id), original)
             app.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
@@ -132,7 +134,7 @@ object Processor {
             id = id,
             audio = SongStore.file(song, song.originalFile),
             sepType = Prefs.sepType,
-            addOpt1 = Prefs.addOpt1,
+            options = mapOf("add_opt1" to Prefs.addOpt1),
             prefix = "stem",
             working = "MVSEP отделяет основной вокал…",
             savedHash = song.mvsepHash,
@@ -150,7 +152,7 @@ object Processor {
         id: String,
         audio: File,
         sepType: Int,
-        addOpt1: String?,
+        options: Map<String, String>,
         prefix: String,
         working: String,
         savedHash: String?,
@@ -161,7 +163,7 @@ object Processor {
         var hash = savedHash
         if (hash == null) {
             progress(id, "Загружаю на MVSEP…")
-            hash = Mvsep.createJob(Prefs.mvsepToken, audio, sepType, addOpt1)
+            hash = Mvsep.createJob(Prefs.mvsepToken, audio, sepType, options)
             saveHash(hash)
         }
         val started = System.currentTimeMillis()
@@ -250,36 +252,38 @@ object Processor {
     private fun canRecognise() =
         if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) Prefs.mvsepToken.isNotBlank() else Prefs.whisperKey.isNotBlank()
 
-    /** Recognition result is cached in the song folder, so re-aligning edited text is free. */
     /**
-     * Recognition order:
+     * Recognition order (cached in the song folder, so re-aligning edited text is free):
      * 1. MVSEP: the original song with "extract vocals first" — MVSEP isolates all vocals with its best model,
      *    which gives Whisper a cleaner voice than our lead-only karaoke stem.
-     * 2. If that finds too few words (or the option is unavailable): our lead-vocal stem as is.
-     * 3. Otherwise the original mix as is. The result with the most words wins.
+     * 2. Our lead-vocal stem as is.
+     * 3. The original mix as is.
+     * Stops at the first result with enough words in the song's language; otherwise keeps the best one.
      */
     private suspend fun transcript(song: Song, refresh: Boolean = false): Transcript {
         val cache = SongStore.file(song, "transcript.json")
-        val done = SongStore.file(song, "transcript_v2_done")
+        val done = SongStore.file(song, "transcript_v3_done")
+        val lang = song.language.ifEmpty { Prefs.language }
         val expected = max(15, (song.durationMs / 12_000).toInt())
+        fun score(tr: Transcript) = if (LineBuilder.matchesLanguage(tr, lang)) LineBuilder.wordCount(tr) else 0
         if (!refresh && cache.exists()) {
             val cached = runCatching { Transcript.fromJson(JSONObject(cache.readText())) }.getOrNull()
-            // Poor results from the older order are recognised again once.
-            if (cached != null && (LineBuilder.wordCount(cached) >= expected || done.exists())) return cached
+            // Poor or wrong-language results from older versions are recognised again once.
+            if (cached != null && (score(cached) >= expected || done.exists())) return cached
         }
         val original = SongStore.file(song, song.originalFile)
         val vocals = song.vocalsFile?.let { SongStore.file(song, it) }?.takeIf { it.exists() }
         val mvsep = Prefs.recogniser == Prefs.RECOGNISER_MVSEP
-        val extract = if (mvsep) mvsepWhisperAlgorithm().extract else null
+        val canExtract = mvsep && whisperOptions(mvsepWhisperAlgorithm(), extract = true, lang = lang).let { it != whisperOptions(mvsepWhisperAlgorithm(), extract = false, lang = lang) }
 
         val attempts = mutableListOf<Attempt>()
-        if (extract != null) {
-            attempts += Attempt("MVSEP выделяет вокал из оригинала и распознаёт…") { recogniseAudio(song, original, "extract", extract) }
+        if (canExtract) {
+            attempts += Attempt("MVSEP выделяет вокал из оригинала и распознаёт…") { recogniseAudio(song, original, "extract", true, lang) }
         }
         if (vocals != null) {
-            attempts += Attempt("Распознаю выделенный основной вокал…") { recogniseAudio(song, vocals, "vocals", null) }
+            attempts += Attempt("Распознаю выделенный основной вокал…") { recogniseAudio(song, vocals, "vocals", false, lang) }
         }
-        attempts += Attempt("Распознаю по оригиналу…") { recogniseAudio(song, original, "original", null) }
+        attempts += Attempt("Распознаю по оригиналу…") { recogniseAudio(song, original, "original", false, lang) }
         var best: Transcript? = null
         var lastError: Exception? = null
         for (attempt in attempts) {
@@ -292,40 +296,50 @@ object Processor {
                 lastError = e
                 continue
             }
-            if (best == null || LineBuilder.wordCount(tr) > LineBuilder.wordCount(best)) best = tr
-            if (LineBuilder.wordCount(tr) >= expected) break
+            if (best == null || score(tr) > score(best)) best = tr
+            if (score(tr) >= expected) break
         }
         done.writeText("1")
         val result = best ?: throw (lastError ?: IOException("распознавание не нашло слов"))
         if (LineBuilder.wordCount(result) == 0) throw IOException("распознавание не нашло слов")
+        if (score(result) == 0) {
+            throw IOException("распознан текст не на том языке (ожидался ${if (lang == "ru") "русский" else "английский"})")
+        }
         cache.writeText(result.toJson().toString())
         return result
     }
 
     private class Attempt(val label: String, val run: suspend () -> Transcript)
 
-    /** [extractOption] null means "as is". */
-    private suspend fun recogniseAudio(song: Song, audio: File, tag: String, extractOption: String?): Transcript =
+    private suspend fun recogniseAudio(song: Song, audio: File, tag: String, extract: Boolean, lang: String): Transcript =
         if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) {
             if (Prefs.mvsepToken.isBlank()) throw IOException("Укажите API-токен MVSEP в настройках")
             val algo = mvsepWhisperAlgorithm()
-            mvsepTranscript(song, audio, tag, algo.id, extractOption ?: algo.asIs)
+            mvsepTranscript(song, audio, tag, algo.id, whisperOptions(algo, extract, lang))
         } else {
             if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
             withContext(Dispatchers.IO) {
-                Whisper.transcribe(audio, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, Prefs.language)
+                Whisper.transcribe(audio, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, lang)
             }
         }
 
+    /** Changing the language makes earlier recognition useless. */
+    fun setLanguage(songId: String, language: String) {
+        val song = SongStore.update(songId) { it.copy(language = language) } ?: return
+        SongStore.dir(song.id).listFiles().orEmpty()
+            .filter { it.name.startsWith("transcript") || it.name.startsWith("whisper_hash") }
+            .forEach { it.delete() }
+    }
+
     /** Whisper large-v3 hosted on MVSEP: same token as separation, reachable without VPN. */
-    private suspend fun mvsepTranscript(song: Song, vocals: File, tag: String, algo: Int, opt: String?): Transcript {
+    private suspend fun mvsepTranscript(song: Song, vocals: File, tag: String, algo: Int, options: Map<String, String>): Transcript {
         val hashFile = SongStore.file(song, "whisper_hash_$tag.txt")
         var raw: JSONObject? = null
         val names = runMvsepJob(
             id = song.id,
             audio = vocals,
             sepType = algo,
-            addOpt1 = opt,
+            options = options,
             prefix = "text_$tag",
             working = "MVSEP распознаёт текст…",
             savedHash = hashFile.takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null },
@@ -400,30 +414,62 @@ object Processor {
         return Lrc.distribute(lines, durationMs)
     }
 
-    data class WhisperAlgo(val id: Int, val asIs: String?, val extract: String?)
+    data class WhisperAlgo(val id: Int, val name: String, val fields: List<Mvsep.Field>)
 
-    /** Looks the Whisper model and its add_opt1 choices up in MVSEP's catalogue (cached). */
-    private fun mvsepWhisperAlgorithm(): WhisperAlgo {
-        if (Prefs.mvsepWhisperId > 0) {
-            return WhisperAlgo(Prefs.mvsepWhisperId, Prefs.mvsepWhisperAsIs.ifEmpty { null }, Prefs.mvsepWhisperExtract.ifEmpty { null })
-        }
+    @Volatile private var whisperAlgo: WhisperAlgo? = null
+
+    /** The Whisper model and its fields from MVSEP's catalogue (read once per app run). */
+    fun mvsepWhisperAlgorithm(): WhisperAlgo {
+        whisperAlgo?.let { return it }
         val algo = runCatching { Mvsep.algorithms() }.getOrNull()
             ?.filter { "whisper" in it.name.lowercase() }
             ?.maxByOrNull { if ("large" in it.name.lowercase()) 1 else 0 }
-            ?: return WhisperAlgo(Prefs.DEFAULT_MVSEP_WHISPER, null, null)
-        val options = algo.fields.firstOrNull { it.name == "add_opt1" }?.options.orEmpty()
-        fun l(o: Mvsep.Option) = o.label.lowercase()
-        val extract = options.firstOrNull { o ->
-            listOf("extract", "separat", "извлеч", "выдел", "отдел").any { it in l(o) } ||
-                (listOf("vocal", "вокал").any { it in l(o) } && listOf("first", "сначала", "before").any { it in l(o) })
+            ?: return WhisperAlgo(Prefs.DEFAULT_MVSEP_WHISPER, "Whisper", emptyList())
+        return WhisperAlgo(algo.id, algo.name, algo.fields).also { whisperAlgo = it }
+    }
+
+    private fun label(o: Mvsep.Option) = o.label.lowercase()
+
+    private fun languageOption(f: Mvsep.Field, lang: String): Mvsep.Option? = f.options.firstOrNull { o ->
+        val l = label(o)
+        when (lang) {
+            "ru" -> "russian" in l || "русск" in l || l.trim() == "ru"
+            "en" -> "english" in l || "англ" in l || l.trim() == "en"
+            else -> "auto" in l || "detect" in l || "авто" in l
         }
-        val asIs = options.filter { it != extract }.firstOrNull { o ->
-            listOf("original", "as is", "directly", "without", "оригинал", "без", "как есть").any { it in l(o) }
-        } ?: options.singleOrNull { it != extract }.takeIf { extract != null && options.size == 2 }
-        Prefs.mvsepWhisperId = algo.id
-        Prefs.mvsepWhisperAsIs = asIs?.key.orEmpty()
-        Prefs.mvsepWhisperExtract = extract?.key.orEmpty()
-        return WhisperAlgo(algo.id, asIs?.key, extract?.key)
+    }
+
+    private fun isLanguageField(f: Mvsep.Field) =
+        f.options.any { o -> label(o).let { "russian" in it || "english" in it || "русск" in it || "англ" in it } }
+
+    private fun extractOption(f: Mvsep.Field) = f.options.firstOrNull { o ->
+        val l = label(o)
+        listOf("extract", "separat", "извлеч", "выдел", "отдел").any { it in l } ||
+            (listOf("vocal", "вокал").any { it in l } && listOf("first", "сначала", "before").any { it in l })
+    }
+
+    private fun asIsOption(f: Mvsep.Field, extract: Mvsep.Option?) = f.options.filter { it != extract }.firstOrNull { o ->
+        listOf("original", "as is", "directly", "without", "оригинал", "без", "как есть").any { it in label(o) }
+    } ?: f.options.singleOrNull { it != extract }.takeIf { extract != null && f.options.size == 2 }
+
+    /** Values for the model's fields: language, vocal extraction, then manual choices from Settings on top. */
+    fun whisperOptions(algo: WhisperAlgo, extract: Boolean, lang: String): Map<String, String> {
+        val overrides = runCatching { JSONObject(Prefs.mvsepWhisperOverrides) }.getOrDefault(JSONObject())
+        val out = linkedMapOf<String, String>()
+        for (f in algo.fields) {
+            if (overrides.has(f.name)) {
+                out[f.name] = overrides.getString(f.name)
+                continue
+            }
+            if (isLanguageField(f)) {
+                languageOption(f, lang)?.let { out[f.name] = it.key }
+                continue
+            }
+            val ex = extractOption(f) ?: continue
+            val chosen = if (extract) ex else asIsOption(f, ex)
+            chosen?.let { out[f.name] = it.key }
+        }
+        return out
     }
 
     // ---- Used by the lyrics editor ----

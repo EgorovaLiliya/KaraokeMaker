@@ -150,3 +150,14 @@ class PoorAlignmentTest {
         )
     }
 }
+
+class LanguageTest {
+    @Test
+    fun detectsWrongLanguage() {
+        val english = Transcript(emptyList(), listOf(TimedText("I walk alone in the night", 0, 3000)))
+        val russian = Transcript(emptyList(), listOf(TimedText("Я капитан своей души", 0, 3000)))
+        assertTrue(!LineBuilder.matchesLanguage(english, "ru"))
+        assertTrue(LineBuilder.matchesLanguage(russian, "ru"))
+        assertTrue(LineBuilder.matchesLanguage(english, ""))
+    }
+}

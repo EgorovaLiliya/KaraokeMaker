@@ -75,6 +75,16 @@ object LineBuilder {
             "поэтому время не расставлено. Расставьте его вручную: ✎ → «Расставить время по ходу песни»"
     )
 
+    /** Whether the recognised text is written in the expected language's alphabet ("" accepts anything). */
+    fun matchesLanguage(tr: Transcript, lang: String): Boolean {
+        if (lang != "ru" && lang != "en") return true
+        val text = if (tr.words.isNotEmpty()) tr.words.joinToString(" ") { it.text } else tr.segments.joinToString(" ") { it.text }
+        val letters = text.filter { it.isLetter() }
+        if (letters.isEmpty()) return false
+        val cyrillic = letters.count { it in '\u0400'..'\u04FF' }.toDouble() / letters.length
+        return if (lang == "ru") cyrillic >= 0.5 else cyrillic < 0.2
+    }
+
     /** Number of words recognised, whether with word timestamps or only per segment. */
     fun wordCount(tr: Transcript): Int =
         if (tr.words.isNotEmpty()) tr.words.size else tr.segments.sumOf { words(it.text).size }

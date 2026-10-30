@@ -87,6 +87,7 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
     var text by remember { mutableStateOf(TextFieldValue(Lrc.toLrc(initial.lyrics))) }
     var karaoke by remember { mutableStateOf(initial.karaokeFile) }
     var vocals by remember { mutableStateOf(initial.vocalsFile) }
+    var language by remember { mutableStateOf(initial.language) }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var syncing by remember { mutableStateOf(false) }
@@ -170,6 +171,12 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             if (initial.stems.isNotEmpty()) {
                 StemPicker("Минус (играет в караоке)", karaoke, initial.stems + initial.originalFile) { karaoke = it }
                 StemPicker("Основной вокал (для распознавания)", vocals, initial.stems) { vocals = it }
+            }
+
+            Text("Язык песни (для распознавания)", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
+            LanguageChips(language) {
+                language = it
+                Processor.setLanguage(songId, it)
             }
 
             Text("Найти или распознать текст", fontWeight = FontWeight.SemiBold)

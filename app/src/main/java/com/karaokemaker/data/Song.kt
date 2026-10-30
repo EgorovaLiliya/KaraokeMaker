@@ -18,6 +18,8 @@ data class Song(
     val stems: List<String> = emptyList(),
     val mvsepHash: String? = null,
     val lyrics: List<LyricLine> = emptyList(),
+    /** Language sung: "ru", "en" or "" (auto). Recognition without it often mistakes Russian for English. */
+    val language: String = "",
     val lyricsSource: String = "",
     val status: SongStatus = SongStatus.PROCESSING,
     val progress: String = "",
@@ -37,6 +39,7 @@ data class Song(
         .put("stems", JSONArray(stems))
         .put("mvsepHash", mvsepHash ?: JSONObject.NULL)
         .put("lyrics", LyricLine.listToJson(lyrics))
+        .put("language", language)
         .put("lyricsSource", lyricsSource)
         .put("status", status.name)
         .put("progress", progress)
@@ -44,6 +47,10 @@ data class Song(
         .put("createdAt", createdAt)
 
     companion object {
+        /** Cyrillic in the title or artist suggests a Russian song. */
+        fun guessLanguage(title: String, artist: String): String =
+            if ((title + artist).any { it in '\u0400'..'\u04FF' }) "ru" else ""
+
         private fun JSONObject.str(key: String): String? =
             if (isNull(key)) null else optString(key).ifEmpty { null }
 
@@ -60,6 +67,7 @@ data class Song(
                 stems = if (stems == null) emptyList() else (0 until stems.length()).map { stems.getString(it) },
                 mvsepHash = o.str("mvsepHash"),
                 lyrics = LyricLine.listFromJson(o.optJSONArray("lyrics")),
+                language = o.optString("language"),
                 lyricsSource = o.optString("lyricsSource"),
                 status = runCatching { SongStatus.valueOf(o.optString("status")) }.getOrDefault(SongStatus.ERROR),
                 progress = o.optString("progress"),

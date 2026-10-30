@@ -54,20 +54,10 @@ object Prefs {
         get() = str("recogniser", RECOGNISER_MVSEP)
         set(v) = put("recogniser", v)
 
-    // "v2" keys: the option lookup changed, so the catalogue is read again once.
-    var mvsepWhisperId: Int
-        get() = sp.getInt("mvsep_whisper_v2_id", 0)
-        set(v) = sp.edit().putInt("mvsep_whisper_v2_id", v).apply()
-
-    /** add_opt1 value meaning "recognise the file as is". */
-    var mvsepWhisperAsIs: String
-        get() = str("mvsep_whisper_v2_as_is")
-        set(v) = put("mvsep_whisper_v2_as_is", v)
-
-    /** add_opt1 value meaning "extract vocals first" (MVSEP isolates vocals with its best model). */
-    var mvsepWhisperExtract: String
-        get() = str("mvsep_whisper_v2_extract")
-        set(v) = put("mvsep_whisper_v2_extract", v)
+    /** Manually chosen values for MVSEP Whisper fields, as a JSON object field → value. */
+    var mvsepWhisperOverrides: String
+        get() = str("mvsep_whisper_overrides", "{}")
+        set(v) = put("mvsep_whisper_overrides", v)
 
     /** "" = auto, otherwise ISO code such as "ru" or "en". */
     var language: String

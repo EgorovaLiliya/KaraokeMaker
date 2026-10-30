@@ -64,6 +64,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
     var algorithms by remember { mutableStateOf<List<Mvsep.Algorithm>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var picked by remember { mutableStateOf<Mvsep.Algorithm?>(null) }
+    var showWhisper by remember { mutableStateOf(false) }
 
     fun saveAndBack() {
         Prefs.mvsepToken = token
@@ -128,6 +129,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
             }
             if (recogniser == Prefs.RECOGNISER_MVSEP) {
                 Hint("Whisper large-v3 на MVSEP с тем же токеном. Работает из России без VPN, но иногда ждёт в очереди.")
+                OutlinedButton(onClick = { showWhisper = true }) { Text("Параметры модели распознавания…") }
             } else {
                 Hint(
                     "Любой OpenAI-совместимый сервис. Groq даёт ключ бесплатно. " +
@@ -194,6 +196,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
             },
         )
     }
+    if (showWhisper) WhisperOptionsDialog(onDismiss = { showWhisper = false })
     picked?.let { a ->
         val field = a.fields.first { it.name == "add_opt1" }
         AlertDialog(
@@ -214,6 +217,63 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
             },
         )
     }
+}
+
+/**
+ * Shows the MVSEP Whisper model's fields with the value the app picks for a Russian song, and lets the user
+ * override any of them. Mostly a window into MVSEP's undocumented options.
+ */
+@Composable
+private fun WhisperOptionsDialog(onDismiss: () -> Unit) {
+    var algo by remember { mutableStateOf<com.karaokemaker.data.Processor.WhisperAlgo?>(null) }
+    var overrides by remember { mutableStateOf(runCatching { org.json.JSONObject(Prefs.mvsepWhisperOverrides) }.getOrDefault(org.json.JSONObject())) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        algo = withContext(Dispatchers.IO) { com.karaokemaker.data.Processor.mvsepWhisperAlgorithm() }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Распознавание MVSEP") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
+        dismissButton = {
+            TextButton(onClick = {
+                Prefs.mvsepWhisperOverrides = "{}"
+                overrides = org.json.JSONObject()
+            }) { Text("Сбросить выбор") }
+        },
+        text = {
+            val a = algo
+            if (a == null) {
+                Text("Загружаю список параметров с MVSEP…")
+            } else {
+                val auto = com.karaokemaker.data.Processor.whisperOptions(a, extract = true, lang = "ru")
+                LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                    item {
+                        Text("Модель: ${a.name} (№${a.id})", fontWeight = FontWeight.Bold)
+                        if (a.fields.isEmpty()) Text("MVSEP не сообщил параметров (или список не загрузился).")
+                        Hint("Отмечено то, что приложение отправит для русской песни. Нажмите вариант, чтобы выбрать его вручную.")
+                    }
+                    a.fields.forEach { f ->
+                        item {
+                            Text("${f.label} (${f.name})", Modifier.padding(top = 12.dp), color = AccentSoft)
+                        }
+                        items(f.options) { o ->
+                            val manual = overrides.optString(f.name, "")
+                            val selected = if (manual.isNotEmpty()) manual == o.key else auto[f.name] == o.key
+                            Text(
+                                (if (selected) "● " else "○ ") + o.label + if (manual == o.key) "  (вручную)" else "",
+                                Modifier.fillMaxWidth().clickable {
+                                    val next = org.json.JSONObject(overrides.toString()).put(f.name, o.key)
+                                    Prefs.mvsepWhisperOverrides = next.toString()
+                                    overrides = next
+                                }.padding(vertical = 6.dp),
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
