@@ -91,7 +91,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
         ) {
             Section("Удаление основного вокала — MVSEP")
             Hint("Зарегистрируйтесь на mvsep.com (бесплатно), войдите и скопируйте API token со страницы API.")
-            Link("Регистрация на MVSEP", "https://mvsep.com/register")
+            Link("Сайт MVSEP (вход и регистрация)", "https://mvsep.com/")
             Link("Получить API token MVSEP", "https://mvsep.com/en/full_api")
             OutlinedTextField(
                 token, { token = it.trim() }, label = { Text("MVSEP API token") }, singleLine = true,
