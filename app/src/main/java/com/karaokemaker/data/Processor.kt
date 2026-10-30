@@ -6,6 +6,7 @@ import android.net.Uri
 import com.karaokemaker.lyrics.LineBuilder
 import com.karaokemaker.lyrics.Lrc
 import com.karaokemaker.lyrics.LyricLine
+import com.karaokemaker.lyrics.SubtitleParser
 import com.karaokemaker.lyrics.Transcript
 import com.karaokemaker.net.Http
 import com.karaokemaker.net.Lrclib
