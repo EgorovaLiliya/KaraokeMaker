@@ -15,11 +15,12 @@ object LineBuilder {
         return hallucinations.any { it in t }
     }
 
-    /** Groups recognised words into singable lines. */
-    fun fromTranscript(tr: Transcript): List<LyricLine> {
+    /** Groups recognised words into singable lines, without backing-vocal echoes and recognition loops. */
+    fun fromTranscript(tr: Transcript): List<LyricLine> = cleanup(rawLines(tr))
+
+    private fun rawLines(tr: Transcript): List<LyricLine> {
         if (tr.words.isEmpty()) {
-            return tr.segments.filter { it.text.isNotBlank() }
-                .map { LyricLine(it.startMs, it.endMs, it.text.trim()) }
+            return tr.segments.filter { it.text.isNotBlank() }.flatMap(::splitSegment)
         }
         val segEnds = tr.segments.map { it.endMs }.toSet()
         val lines = mutableListOf<LyricLine>()
@@ -50,6 +51,64 @@ object LineBuilder {
         }
         flush()
         return lines
+    }
+
+    private val lineBoundary = Regex("""(?<=[,;.!?…])\s+(?=\p{Lu})""")
+
+    /**
+     * Whisper often puts two sung lines in one segment ("…беды, Не дрогнул…"). Split where a new line starts
+     * with a capital letter after punctuation, sharing the segment's time by text length.
+     */
+    private fun splitSegment(seg: TimedText): List<LyricLine> {
+        val text = seg.text.trim()
+        val parts = mutableListOf<String>()
+        for (p in text.split(lineBoundary)) {
+            val part = p.trim()
+            if (parts.isNotEmpty() && (part.length < 12 || parts.last().length < 12)) {
+                parts[parts.lastIndex] = parts.last() + " " + part
+            } else if (part.isNotEmpty()) {
+                parts += part
+            }
+        }
+        if (parts.size <= 1) return listOf(LyricLine(seg.startMs, seg.endMs, text))
+        val total = parts.sumOf { it.length }.toDouble()
+        val span = seg.endMs - seg.startMs
+        var start = seg.startMs
+        return parts.map { part ->
+            val end = start + (span * part.length / total).toLong()
+            LyricLine(start, end, part).also { start = end }
+        }
+    }
+
+    private fun words(text: String) = text.split(Regex("\\s+")).map(::norm).filter { it.isNotEmpty() }
+
+    /**
+     * Removes what the lead singer does not sing:
+     * - short echoes of the end of the previous line ("…но не упал" → "Не упал"), usually backing vocals
+     *   that leaked into the lead-vocal track;
+     * - long runs of the same line, a typical Whisper loop on fade-outs (at most two in a row are kept).
+     */
+    fun cleanup(lines: List<LyricLine>): List<LyricLine> {
+        val out = mutableListOf<LyricLine>()
+        var run = 0
+        for (line in lines) {
+            val w = words(line.text)
+            if (w.isEmpty()) continue
+            val prev = out.lastOrNull()?.let { words(it.text) }
+            if (prev != null) {
+                if (w == prev) {
+                    run++
+                    if (run >= 2) continue
+                    out += line
+                    continue
+                }
+                val echo = w.size <= 3 && w.size < prev.size && prev.takeLast(w.size) == w
+                if (echo) continue
+            }
+            run = 0
+            out += line
+        }
+        return out
     }
 
     private fun norm(w: String) = w.lowercase().replace('ё', 'е').filter { it.isLetterOrDigit() }

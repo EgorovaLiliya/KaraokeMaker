@@ -75,3 +75,45 @@ class SubtitleParserTest {
         assertNull(SubtitleParser.parse("result.txt", "just some words"))
     }
 }
+
+class CleanupTest {
+    private fun seg(t: String, s: Long, e: Long) = TimedText(t, s, e)
+
+    @Test
+    fun dropsEchoesAndLoops() {
+        val segments = listOf(
+            seg("Я ранен был, но не упал.", 60_000, 64_000),
+            seg("Не упал.", 64_640, 66_240),
+            seg("Я ранен был, но не упал.", 71_260, 75_900),
+            seg("Я как и прежде не боюсь.", 149_000, 154_000),
+            seg("Не боюсь.", 155_500, 157_000),
+            seg("Не боюсь.", 157_620, 159_000),
+            seg("Я капитан своей души.", 187_980, 192_240),
+            seg("Я капитан своей души.", 200_780, 204_000),
+            seg("Я капитан своей души.", 208_000, 210_000),
+            seg("Я капитан своей души.", 211_260, 213_000),
+        )
+        val lines = LineBuilder.fromTranscript(Transcript(emptyList(), segments)).map { it.text }
+        assertEquals(
+            listOf(
+                "Я ранен был, но не упал.",
+                "Я ранен был, но не упал.",
+                "Я как и прежде не боюсь.",
+                "Я капитан своей души.",
+                "Я капитан своей души.",
+            ),
+            lines,
+        )
+    }
+
+    @Test
+    fun splitsTwoSungLinesInOneSegment() {
+        val lines = LineBuilder.fromTranscript(
+            Transcript(emptyList(), listOf(seg("Я попал в тиски беды, Не дрогнул и не застонал,", 30_000, 40_000)))
+        )
+        assertEquals(listOf("Я попал в тиски беды,", "Не дрогнул и не застонал,"), lines.map { it.text })
+        assertEquals(30_000L, lines[0].startMs)
+        assertTrue(lines[1].startMs in 33_000L..36_000L)
+        assertEquals(40_000L, lines[1].endMs)
+    }
+}
