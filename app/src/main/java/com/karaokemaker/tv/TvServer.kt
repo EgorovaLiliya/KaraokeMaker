@@ -71,7 +71,13 @@ object TvServer {
                     ServerSocket(0)
                 }
                 server = ss
-                state.update { it.copy(address = "${Frames.localIp() ?: "?"}:${ss.localPort}", error = null) }
+                val ips = Frames.localIps()
+                state.update {
+                    it.copy(
+                        address = ips.ifEmpty { listOf("?") }.joinToString("   или   ") { ip -> "$ip:${ss.localPort}" },
+                        error = null,
+                    )
+                }
                 register(app, ss.localPort)
                 while (isActive) {
                     val s = ss.accept()
@@ -105,6 +111,8 @@ object TvServer {
             serviceName = "KaraokeMaker TV (${Build.MODEL})"
             serviceType = Frames.SERVICE_TYPE
             setPort(port)
+            // Phones try every address, so a TV with several interfaces is still reachable.
+            runCatching { setAttribute("ips", Frames.localIps().joinToString(",")) }
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {}

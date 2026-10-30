@@ -34,11 +34,25 @@ object Frames {
 
     fun msg(type: String): JSONObject = JSONObject().put("type", type)
 
-    fun localIp(): String? = runCatching {
+    /** All IPv4 LAN addresses, Wi-Fi and Ethernet first: a TV often has several interfaces. */
+    fun localIps(): List<String> = runCatching {
         NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback }
+            .filter { it.isUp && !it.isLoopback && !it.isVirtual }
+            .sortedBy { i ->
+                val n = i.name.lowercase()
+                when {
+                    n.startsWith("wlan") -> 0
+                    n.startsWith("eth") -> 1
+                    n.startsWith("p2p") || n.startsWith("tun") || n.startsWith("rmnet") -> 3
+                    else -> 2
+                }
+            }
             .flatMap { it.inetAddresses.toList() }
             .filterIsInstance<Inet4Address>()
-            .firstOrNull { it.isSiteLocalAddress }?.hostAddress
-    }.getOrNull()
+            .filter { it.isSiteLocalAddress }
+            .mapNotNull { it.hostAddress }
+            .distinct()
+    }.getOrDefault(emptyList())
+
+    fun subnet(ip: String) = ip.substringBeforeLast('.')
 }

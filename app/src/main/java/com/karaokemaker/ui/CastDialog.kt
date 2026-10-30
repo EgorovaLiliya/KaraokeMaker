@@ -93,7 +93,7 @@ fun CastDialog(onDismiss: () -> Unit) {
                         val host = text.substringBefore(':')
                         val port = text.substringAfter(':', "").toIntOrNull() ?: Frames.PORT
                         Prefs.lastTvAddress = text
-                        TvLink.connect(TvLink.Device(host, host, port))
+                        TvLink.connect(TvLink.Device(host, listOf(host), port))
                     },
                 ) { Text("Подключить по адресу") }
             }

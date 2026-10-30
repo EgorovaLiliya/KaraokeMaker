@@ -26,7 +26,7 @@ import java.util.concurrent.Executors
 
 /** Phone side of the TV link: finds TVs on Wi-Fi, sends songs and remote-controls playback. */
 object TvLink {
-    data class Device(val name: String, val host: String, val port: Int)
+    data class Device(val name: String, val hosts: List<String>, val port: Int)
 
     data class State(
         val device: Device? = null,
@@ -58,28 +58,63 @@ object TvLink {
     fun connect(device: Device) {
         disconnect()
         state.value = State(device = device, connecting = true)
-        val s = Socket()
-        socket = s
+        val holder = Any()
+        currentAttempt = holder
         scope.launch {
-            try {
-                s.connect(InetSocketAddress(device.host, device.port), 6000)
-                s.tcpNoDelay = true
-                out = DataOutputStream(BufferedOutputStream(s.getOutputStream(), 64 * 1024))
-                val input = DataInputStream(BufferedInputStream(s.getInputStream()))
-                state.update { it.copy(connecting = false, error = null) }
-                send(Frames.msg("hello").put("name", Build.MODEL))
-                while (true) onMessage(Frames.read(input))
-            } catch (e: Exception) {
-                if (socket === s) {
-                    socket = null
-                    out = null
-                    state.value = State(error = "Нет связи с телевизором: ${e.message ?: "соединение закрыто"}")
+            val mine = Frames.localIps()
+            // Addresses in the phone's own network first.
+            val hosts = device.hosts.distinct().sortedBy { h -> if (mine.any { Frames.subnet(it) == Frames.subnet(h) }) 0 else 1 }
+            var lastError: Exception? = null
+            for (host in hosts) {
+                if (currentAttempt !== holder) return@launch
+                val s = Socket()
+                try {
+                    s.connect(InetSocketAddress(host, device.port), 4000)
+                } catch (e: Exception) {
+                    lastError = e
+                    runCatching { s.close() }
+                    continue
                 }
+                if (currentAttempt !== holder) {
+                    runCatching { s.close() }
+                    return@launch
+                }
+                socket = s
+                try {
+                    s.tcpNoDelay = true
+                    out = DataOutputStream(BufferedOutputStream(s.getOutputStream(), 64 * 1024))
+                    val input = DataInputStream(BufferedInputStream(s.getInputStream()))
+                    state.update { it.copy(connecting = false, error = null) }
+                    send(Frames.msg("hello").put("name", Build.MODEL))
+                    while (true) onMessage(Frames.read(input))
+                } catch (e: Exception) {
+                    if (socket === s) {
+                        socket = null
+                        out = null
+                        state.value = State(error = "Связь с телевизором прервалась: ${e.message ?: "соединение закрыто"}")
+                    }
+                    return@launch
+                }
+            }
+            if (currentAttempt === holder) {
+                val sameNetwork = hosts.any { h -> mine.any { Frames.subnet(it) == Frames.subnet(h) } }
+                state.value = State(
+                    error = if (!sameNetwork && mine.isNotEmpty()) {
+                        "Телефон (${mine.first()}) и телевизор (${hosts.joinToString()}) в разных сетях. " +
+                            "Подключите их к одной Wi-Fi сети (одному роутеру) и попробуйте снова."
+                    } else {
+                        "Не удалось подключиться к телевизору (${hosts.joinToString()}): ${lastError?.message ?: "нет ответа"}. " +
+                            "Проверьте, что KaraokeMaker открыт на ТВ."
+                    }
+                )
             }
         }
     }
 
+    @Volatile private var currentAttempt: Any? = null
+
     fun disconnect() {
+        currentAttempt = null
         val s = socket
         socket = null
         out = null
@@ -233,9 +268,12 @@ object TvLink {
             nsd?.resolveService(info, object : NsdManager.ResolveListener {
                 override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = resolveNext()
                 override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                    val host = serviceInfo.host?.hostAddress
-                    if (host != null) {
-                        val d = Device(serviceInfo.serviceName, host, serviceInfo.port)
+                    val extra = runCatching {
+                        serviceInfo.attributes["ips"]?.toString(Charsets.UTF_8)?.split(',')
+                    }.getOrNull().orEmpty().map { it.trim() }.filter { it.isNotEmpty() }
+                    val hosts = (listOfNotNull(serviceInfo.host?.hostAddress) + extra).distinct()
+                    if (hosts.isNotEmpty()) {
+                        val d = Device(serviceInfo.serviceName, hosts, serviceInfo.port)
                         devices.update { list -> list.filter { it.name != d.name } + d }
                     }
                     resolveNext()
