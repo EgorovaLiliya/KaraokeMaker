@@ -59,7 +59,17 @@ object LineBuilder {
      * Whisper often puts two sung lines in one segment ("…беды, Не дрогнул…"). Split where a new line starts
      * with a capital letter after punctuation, sharing the segment's time by text length.
      */
-    private fun splitSegment(seg: TimedText): List<LyricLine> {
+    /**
+     * Whisper segments often start too early: the first one swallows the whole instrumental intro (0:00–1:02
+     * for one line). The end is reliable, so a segment longer than the words can take to sing is cut from the start.
+     */
+    fun sungStart(startMs: Long, endMs: Long, wordCount: Int): Long =
+        max(startMs, endMs - (MS_PER_WORD * wordCount + 800L).coerceAtLeast(2000L))
+
+    private const val MS_PER_WORD = 550L
+
+    private fun splitSegment(raw: TimedText): List<LyricLine> {
+        val seg = raw.copy(startMs = sungStart(raw.startMs, raw.endMs, words(raw.text).size))
         val text = seg.text.trim()
         val parts = mutableListOf<String>()
         for (p in text.split(lineBoundary)) {
@@ -139,8 +149,9 @@ object LineBuilder {
             // No word timestamps: spread every segment's words over its time span.
             tr.segments.flatMap { seg ->
                 val parts = seg.text.split(Regex("\\s+")).filter { it.isNotBlank() }
-                val step = if (parts.isEmpty()) 0 else (seg.endMs - seg.startMs) / parts.size
-                parts.mapIndexed { i, p -> TimedText(p, seg.startMs + i * step, seg.startMs + (i + 1) * step) }
+                val start = sungStart(seg.startMs, seg.endMs, parts.size)
+                val step = if (parts.isEmpty()) 0 else (seg.endMs - start) / parts.size
+                parts.mapIndexed { i, p -> TimedText(p, start + i * step, start + (i + 1) * step) }
             }
         }
         val lyricTokens = mutableListOf<Pair<Int, String>>() // line index to normalised word
@@ -199,6 +210,10 @@ object LineBuilder {
         val out = mutableListOf<LyricLine>()
         for (x in plain.indices) {
             var s = starts[x]
+            val e0 = ends[x]
+            // A line matched across a long stretch (its first word paired with something far earlier) is
+            // anchored to its end instead.
+            if (e0 > s) s = sungStart(s, e0, words(plain[x]).size)
             if (out.isNotEmpty() && s <= out.last().startMs) s = out.last().startMs + 200
             val e = ends[x].takeIf { it > s }
             out += LyricLine(s, e, plain[x])

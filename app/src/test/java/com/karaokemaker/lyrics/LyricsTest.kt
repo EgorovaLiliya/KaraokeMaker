@@ -117,3 +117,21 @@ class CleanupTest {
         assertEquals(40_000L, lines[1].endMs)
     }
 }
+
+class LongSegmentTest {
+    @Test
+    fun segmentSwallowingTheIntroIsAnchoredToItsEnd() {
+        val tr = Transcript(
+            emptyList(),
+            listOf(
+                TimedText("провожаемый взглядами продавщиц,", 0, 62_500),
+                TimedText("сбитый каретой скорой помощи,", 63_000, 66_000),
+            ),
+        )
+        val recognised = LineBuilder.fromTranscript(tr)
+        assertTrue(recognised[0].startMs > 58_000)
+        val aligned = LineBuilder.align(listOf("провожаемый взглядами продавщиц,", "сбитый каретой скорой помощи,"), tr, 240_000)
+        assertTrue(aligned[0].startMs > 58_000)
+        assertTrue(aligned[1].startMs in 62_000L..64_000L)
+    }
+}
