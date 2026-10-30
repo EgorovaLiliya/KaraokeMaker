@@ -130,16 +130,20 @@ fun LibraryScreen(
     }
     LaunchedEffect(pickedUri) {
         val uri = pickedUri ?: return@LaunchedEffect
-        pickedUri = null
-        if (withContext(Dispatchers.IO) { SongPackage.isPackage(context, uri) }) {
-            val result = withContext(Dispatchers.IO) { runCatching { SongPackage.import(context, uri) } }
-            val text = result.fold(
-                onSuccess = { "Песня «${it.title}» добавлена" },
-                onFailure = { "Не удалось открыть песню: ${it.message}" },
-            )
-            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
-        } else {
-            draft = withContext(Dispatchers.IO) { readDraft(context, uri) }
+        // Clearing pickedUri restarts this effect, so it is done only after the work: earlier it cancelled the import.
+        try {
+            if (withContext(Dispatchers.IO) { SongPackage.isPackage(context, uri) }) {
+                val result = withContext(Dispatchers.IO) { runCatching { SongPackage.import(context, uri) } }
+                val text = result.fold(
+                    onSuccess = { "Песня «${it.title}» добавлена" },
+                    onFailure = { "Не удалось открыть песню: ${it.message}" },
+                )
+                Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+            } else {
+                draft = withContext(Dispatchers.IO) { readDraft(context, uri) }
+            }
+        } finally {
+            pickedUri = null
         }
     }
 
