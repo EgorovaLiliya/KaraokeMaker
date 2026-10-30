@@ -88,6 +88,7 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
     var vocals by remember { mutableStateOf(initial.vocalsFile) }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var syncing by remember { mutableStateOf(false) }
 
     val player = remember { LocalPlayer.get(context) }
     var pos by remember { mutableLongStateOf(0L) }
@@ -130,6 +131,21 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             )
         }
         onBack()
+    }
+
+    if (syncing) {
+        SyncScreen(
+            lines = Lrc.parse(text.text).map { it.text }.ifEmpty { Lrc.plainLines(text.text) },
+            player = player,
+            positionMs = pos,
+            onDone = { result ->
+                text = TextFieldValue(result)
+                syncing = false
+                message = "Время расставлено. Проверьте в плеере и нажмите «Сохранить»."
+            },
+            onCancel = { syncing = false },
+        )
+        return
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -186,6 +202,23 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             }
             message?.let { Text(it, color = AccentSoft, style = MaterialTheme.typography.bodySmall) }
 
+            Text("Расставить время вручную", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Вставьте текст ниже (каждая строка песни — с новой строки), затем нажмите кнопку: " +
+                    "песня заиграет с начала, а вы нажимаете большую кнопку в момент, когда начинается каждая строка.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+            Button(
+                enabled = Lrc.plainLines(text.text).isNotEmpty(),
+                onClick = { syncing = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Timer, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Расставить время по ходу песни")
+            }
+
             Text("Сдвинуть весь текст", fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (delta in listOf(-1000L, -250L, 250L, 1000L)) {
@@ -196,8 +229,8 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             }
 
             Text(
-                "Формат строки: [мм:сс.сс]текст. Пустая метка — конец строки. Включите песню, поставьте курсор на строку " +
-                    "и жмите ⏱ в момент её начала — метка встанет сама.",
+                "Для точной правки: формат строки [мм:сс.сс]текст, пустая метка — конец строки перед проигрышем. " +
+                    "Кнопка «Метка» внизу ставит текущее время на строку, где стоит курсор.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.7f),
             )
