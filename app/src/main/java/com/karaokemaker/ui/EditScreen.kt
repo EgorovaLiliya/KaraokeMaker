@@ -135,7 +135,7 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
 
     if (syncing) {
         SyncScreen(
-            lines = Lrc.parse(text.text).map { it.text }.ifEmpty { Lrc.plainLines(text.text) },
+            lines = Lrc.plainLines(text.text),
             player = player,
             positionMs = pos,
             onDone = { result ->
