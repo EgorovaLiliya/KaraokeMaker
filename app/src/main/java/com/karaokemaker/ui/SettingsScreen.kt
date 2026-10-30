@@ -14,7 +14,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -85,7 +90,9 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Section("Удаление основного вокала — MVSEP")
-            Hint("Зарегистрируйтесь на mvsep.com (бесплатно), откройте профиль и скопируйте API token.")
+            Hint("Зарегистрируйтесь на mvsep.com (бесплатно), войдите и скопируйте API token со страницы API.")
+            Link("Регистрация на MVSEP", "https://mvsep.com/register")
+            Link("Получить API token MVSEP", "https://mvsep.com/en/full_api")
             OutlinedTextField(
                 token, { token = it.trim() }, label = { Text("MVSEP API token") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
@@ -123,9 +130,11 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
                 Hint("Whisper large-v3 на MVSEP с тем же токеном. Работает из России без VPN, но иногда ждёт в очереди.")
             } else {
                 Hint(
-                    "Любой OpenAI-совместимый сервис. Groq: бесплатный ключ на console.groq.com. " +
+                    "Любой OpenAI-совместимый сервис. Groq даёт ключ бесплатно. " +
                         "Из России Groq и OpenAI работают только через VPN."
                 )
+                Link("Получить ключ Groq", "https://console.groq.com/keys")
+                Link("Получить ключ OpenAI", "https://platform.openai.com/api-keys")
                 OutlinedTextField(
                     whisperKey, { whisperKey = it.trim() }, label = { Text("API-ключ") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
@@ -210,6 +219,19 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
 @Composable
 private fun Section(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = AccentSoft)
+}
+
+/** Opens the page in the browser; the key can then be copied and pasted into the field below. */
+@Composable
+private fun Link(text: String, url: String) {
+    val uriHandler = LocalUriHandler.current
+    TextButton(
+        onClick = { runCatching { uriHandler.openUri(url) } },
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+    ) {
+        Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp), tint = AccentSoft)
+        Text("  $text", color = AccentSoft, textDecoration = TextDecoration.Underline)
+    }
 }
 
 @Composable
