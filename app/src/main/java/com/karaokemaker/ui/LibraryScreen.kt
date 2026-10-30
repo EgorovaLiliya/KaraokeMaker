@@ -130,13 +130,18 @@ fun LibraryScreen(
 
     Scaffold(
         containerColor = Color.Transparent,
+        contentColor = Color.White,
         topBar = {
             TopAppBar(
                 title = { Text("KaraokeMaker", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Настройки") }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    titleContentColor = Color.White,
+                    actionIconContentColor = Color.White,
+                ),
             )
         },
         floatingActionButton = {
@@ -151,7 +156,10 @@ fun LibraryScreen(
             if (Prefs.mvsepToken.isBlank()) {
                 Card(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable(onClick = onSettings),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = Color.White,
+                    ),
                 ) {
                     Text(
                         "Чтобы убирать основной вокал, укажите бесплатный API-токен MVSEP в настройках →",
@@ -213,7 +221,10 @@ private fun SongCard(song: Song, onOpen: () -> Unit, onEdit: () -> Unit) {
     val playable = song.status == SongStatus.READY || song.durationMs > 0
     Card(
         Modifier.fillMaxWidth().clickable(enabled = playable, onClick = onOpen),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+            contentColor = Color.White,
+        ),
     ) {
         Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.MusicNote, null, tint = Accent, modifier = Modifier.size(32.dp))

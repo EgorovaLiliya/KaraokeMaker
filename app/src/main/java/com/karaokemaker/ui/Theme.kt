@@ -1,8 +1,10 @@
 package com.karaokemaker.ui
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
@@ -26,7 +28,10 @@ private val colors = darkColorScheme(
 
 @Composable
 fun KaraokeTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = colors) {
+        // Screens draw on a gradient instead of a Surface, so set light text and icons explicitly.
+        CompositionLocalProvider(LocalContentColor provides Color.White, content = content)
+    }
 }
 
 fun formatTime(ms: Long): String {
