@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -51,6 +52,8 @@ fun SyncScreen(
     lines: List<String>,
     player: ExoPlayer,
     positionMs: Long,
+    minus: Boolean,
+    onToggleMinus: (() -> Unit)?,
     onDone: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -86,6 +89,12 @@ fun SyncScreen(
             Button(onClick = ::finish) { Text("Готово") }
         }
         LinearProgressIndicator(progress = { index.toFloat() / lines.size }, Modifier.fillMaxWidth())
+        if (onToggleMinus != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !minus, onClick = { if (minus) onToggleMinus() }, label = { Text("Оригинал") })
+                FilterChip(selected = minus, onClick = { if (!minus) onToggleMinus() }, label = { Text("Минус") })
+            }
+        }
 
         Text(
             lines.getOrNull(index - 1) ?: "",

@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -93,7 +94,10 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
     val player = remember { LocalPlayer.get(context) }
     var pos by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(false) }
-    val playFile = SongStore.file(initial, karaoke ?: initial.originalFile)
+    // The original by default: the lead vocal makes it easy to hear where each line starts.
+    var playMinus by remember { mutableStateOf(false) }
+    val minusFile = karaoke?.takeIf { it != initial.originalFile }
+    val playFile = SongStore.file(initial, if (playMinus && minusFile != null) minusFile else initial.originalFile)
     LaunchedEffect(playFile.path) { LocalPlayer.load(context, playFile, LocalPlayer.position()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -138,6 +142,8 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             lines = Lrc.plainLines(text.text),
             player = player,
             positionMs = pos,
+            minus = playMinus,
+            onToggleMinus = if (minusFile != null) ({ playMinus = !playMinus }) else null,
             onDone = { result ->
                 text = TextFieldValue(result)
                 syncing = false
@@ -256,6 +262,9 @@ fun EditScreen(songId: String, onBack: () -> Unit) {
             }
             Text(Lrc.format(pos), fontFamily = FontFamily.Monospace)
             Box(Modifier.weight(1f))
+            if (minusFile != null) {
+                TextButton(onClick = { playMinus = !playMinus }) { Text(if (playMinus) "Минус" else "Оригинал") }
+            }
             Button(onClick = { text = stamp(text, player.currentPosition) }) {
                 Icon(Icons.Default.Timer, null)
                 Spacer(Modifier.width(6.dp))
