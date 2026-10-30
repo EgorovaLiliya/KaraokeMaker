@@ -63,10 +63,21 @@ object LineBuilder {
      * Whisper segments often start too early: the first one swallows the whole instrumental intro (0:00–1:02
      * for one line). The end is reliable, so a segment longer than the words can take to sing is cut from the start.
      */
-    fun sungStart(startMs: Long, endMs: Long, wordCount: Int): Long =
-        max(startMs, endMs - (MS_PER_WORD * wordCount + 800L).coerceAtLeast(2000L))
+    fun sungStart(startMs: Long, endMs: Long, wordCount: Int): Long {
+        val longest = max(10_000L, wordCount * 1200L + 2000L)
+        if (endMs - startMs <= longest) return startMs
+        return max(startMs, endMs - (wordCount * 900L + 1500L))
+    }
 
-    private const val MS_PER_WORD = 550L
+    /** Recognition that hardly matches the known lyrics: timing it would only produce nonsense. */
+    class PoorAlignment(val matchedPercent: Int) : java.io.IOException(
+        "распознанный вокал почти не совпадает с текстом (совпало $matchedPercent% слов), " +
+            "поэтому время не расставлено. Расставьте его вручную: ✎ → «Расставить время по ходу песни»"
+    )
+
+    /** Number of words recognised, whether with word timestamps or only per segment. */
+    fun wordCount(tr: Transcript): Int =
+        if (tr.words.isNotEmpty()) tr.words.size else tr.segments.sumOf { words(it.text).size }
 
     private fun splitSegment(raw: TimedText): List<LyricLine> {
         val seg = raw.copy(startMs = sungStart(raw.startMs, raw.endMs, words(raw.text).size))
@@ -144,7 +155,17 @@ object LineBuilder {
      * Puts known lyrics (from LRCLIB or pasted by the user) on the timeline of the recognised words.
      * Uses a word-level edit-distance alignment, so recognition mistakes only blur the timing locally.
      */
-    fun align(plain: List<String>, tr: Transcript, durationMs: Long): List<LyricLine> {
+    fun align(plain: List<String>, tr: Transcript, durationMs: Long): List<LyricLine> =
+        alignWithScore(plain, tr, durationMs).first
+
+    /** Like [align], but refuses when too few words of the lyrics were found in the recognition. */
+    fun alignChecked(plain: List<String>, tr: Transcript, durationMs: Long): List<LyricLine> {
+        val (lines, ratio) = alignWithScore(plain, tr, durationMs)
+        if (ratio < 0.25) throw PoorAlignment((ratio * 100).toInt())
+        return lines
+    }
+
+    private fun alignWithScore(plain: List<String>, tr: Transcript, durationMs: Long): Pair<List<LyricLine>, Double> {
         val words = tr.words.ifEmpty {
             // No word timestamps: spread every segment's words over its time span.
             tr.segments.flatMap { seg ->
@@ -159,7 +180,7 @@ object LineBuilder {
             line.split(Regex("\\s+")).map(::norm).filter { it.isNotEmpty() }.forEach { lyricTokens += li to it }
         }
         val asr = words.map { norm(it.text) }
-        if (lyricTokens.isEmpty() || asr.isEmpty()) return Lrc.distribute(plain, durationMs)
+        if (lyricTokens.isEmpty() || asr.isEmpty()) return Lrc.distribute(plain, durationMs) to 0.0
 
         val n = lyricTokens.size
         val m = asr.size
@@ -172,6 +193,7 @@ object LineBuilder {
             cost[i * w + j] = min(cost[(i - 1) * w + j - 1] + sub, min(cost[(i - 1) * w + j], cost[i * w + j - 1]) + 1)
         }
         // Backtrack, collecting which recognised word each lyric token lines up with.
+        var matched = 0
         val firstWord = IntArray(plain.size) { -1 }
         val lastWord = IntArray(plain.size) { -1 }
         var i = n
@@ -185,6 +207,7 @@ object LineBuilder {
                     val li = lyricTokens[i - 1].first
                     firstWord[li] = j - 1
                     if (lastWord[li] == -1) lastWord[li] = j - 1
+                    if (sub == 0) matched++
                     i--; j--
                 }
                 else -> j--
@@ -218,6 +241,6 @@ object LineBuilder {
             val e = ends[x].takeIf { it > s }
             out += LyricLine(s, e, plain[x])
         }
-        return out
+        return out to matched.toDouble() / n
     }
 }

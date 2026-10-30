@@ -135,3 +135,18 @@ class LongSegmentTest {
         assertTrue(aligned[1].startMs in 62_000L..64_000L)
     }
 }
+
+class PoorAlignmentTest {
+    @Test(expected = LineBuilder.PoorAlignment::class)
+    fun refusesToTimeLyricsAgainstGarbage() {
+        val tr = Transcript(
+            emptyList(),
+            listOf(TimedText("you", 180, 240), TimedText("you", 30_000, 30_360), TimedText("you you", 300_100, 302_520)),
+        )
+        LineBuilder.alignChecked(
+            listOf("провожаемый взглядами продавщиц,", "сбитый каретой скорой помощи,", "улыбающийся,"),
+            tr,
+            300_000,
+        )
+    }
+}

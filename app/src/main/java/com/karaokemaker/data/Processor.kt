@@ -26,6 +26,7 @@ import java.io.File
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.max
 
 /**
  * Turns an mp3 into a karaoke song:
@@ -240,7 +241,7 @@ object Processor {
         progress(song.id, "Распознаю текст по вокалу…")
         val tr = transcript(song)
         return if (plain != null) {
-            LineBuilder.align(Lrc.plainLines(plain), tr, song.durationMs) to "LRCLIB, время выставлено по вокалу"
+            LineBuilder.alignChecked(Lrc.plainLines(plain), tr, song.durationMs) to "LRCLIB, время выставлено по вокалу"
         } else {
             LineBuilder.fromTranscript(tr) to "Распознано нейросетью — проверьте текст в редакторе"
         }
@@ -252,33 +253,51 @@ object Processor {
     /** Recognition result is cached in the song folder, so re-aligning edited text is free. */
     private suspend fun transcript(song: Song, refresh: Boolean = false): Transcript {
         val cache = SongStore.file(song, "transcript.json")
+        val mixTried = SongStore.file(song, "transcript_mix_tried")
+        val expected = max(15, (song.durationMs / 12_000).toInt())
         if (!refresh && cache.exists()) {
-            runCatching { return Transcript.fromJson(JSONObject(cache.readText())) }
+            val cached = runCatching { Transcript.fromJson(JSONObject(cache.readText())) }.getOrNull()
+            // A near-empty result saved before the full-mix retry existed is recognised again.
+            if (cached != null && (LineBuilder.wordCount(cached) >= expected || mixTried.exists())) return cached
         }
-        val source = SongStore.file(song, song.vocalsFile ?: song.originalFile)
-        val tr = if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) {
-            if (Prefs.mvsepToken.isBlank()) throw IOException("Укажите API-токен MVSEP в настройках")
-            mvsepTranscript(song, source)
-        } else {
-            if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
-            Whisper.transcribe(source, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, Prefs.language)
+        val original = SongStore.file(song, song.originalFile)
+        val vocals = song.vocalsFile?.let { SongStore.file(song, it) }?.takeIf { it.exists() }
+        var tr = recogniseAudio(song, vocals ?: original, "vocals")
+        // Whisper sometimes hears nothing in an isolated vocal (it then invents "you" every 30 s).
+        // The full mix usually works, so retry on it and keep whichever result has more words.
+        if (vocals != null && LineBuilder.wordCount(tr) < expected) {
+            mixTried.writeText("1")
+            progress(song.id, "В выделенном вокале почти не нашлось слов, распознаю по оригиналу…")
+            val fromMix = runCatching { recogniseAudio(song, original, "original") }.getOrNull()
+            if (fromMix != null && LineBuilder.wordCount(fromMix) > LineBuilder.wordCount(tr)) tr = fromMix
         }
-        if (tr.words.isEmpty() && tr.segments.isEmpty()) throw IOException("распознавание не нашло слов")
+        if (LineBuilder.wordCount(tr) == 0) throw IOException("распознавание не нашло слов")
         cache.writeText(tr.toJson().toString())
         return tr
     }
 
+    private suspend fun recogniseAudio(song: Song, audio: File, tag: String): Transcript =
+        if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) {
+            if (Prefs.mvsepToken.isBlank()) throw IOException("Укажите API-токен MVSEP в настройках")
+            mvsepTranscript(song, audio, tag)
+        } else {
+            if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
+            withContext(Dispatchers.IO) {
+                Whisper.transcribe(audio, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, Prefs.language)
+            }
+        }
+
     /** Whisper large-v3 hosted on MVSEP: same token as separation, reachable without VPN. */
-    private suspend fun mvsepTranscript(song: Song, vocals: File): Transcript {
+    private suspend fun mvsepTranscript(song: Song, vocals: File, tag: String): Transcript {
         val (algo, opt) = mvsepWhisperAlgorithm()
-        val hashFile = SongStore.file(song, "whisper_hash.txt")
+        val hashFile = SongStore.file(song, "whisper_hash_$tag.txt")
         var raw: JSONObject? = null
         val names = runMvsepJob(
             id = song.id,
             audio = vocals,
             sepType = algo,
             addOpt1 = opt,
-            prefix = "text",
+            prefix = "text_$tag",
             working = "MVSEP распознаёт текст…",
             savedHash = hashFile.takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null },
             saveHash = { h -> if (h == null) hashFile.delete() else hashFile.writeText(h) },
@@ -287,7 +306,7 @@ object Processor {
         )
         hashFile.delete()
         // Kept for diagnosis: the exact shape of MVSEP's Whisper answer is not documented.
-        raw?.let { SongStore.file(song, "whisper_response.json").writeText(it.toString(2)) }
+        raw?.let { SongStore.file(song, "whisper_response_$tag.json").writeText(it.toString(2)) }
 
         val texts = mutableListOf<Pair<String, String>>() // file name hint to content
         names.forEach { n -> texts += n to SongStore.file(song, n).readText() }
@@ -381,7 +400,7 @@ object Processor {
         val song = SongStore.get(songId) ?: throw IOException("Песня не найдена")
         try {
             val tr = transcript(song, refresh)
-            if (plain.isNullOrEmpty()) LineBuilder.fromTranscript(tr) else LineBuilder.align(plain, tr, song.durationMs)
+            if (plain.isNullOrEmpty()) LineBuilder.fromTranscript(tr) else LineBuilder.alignChecked(plain, tr, song.durationMs)
         } catch (e: PlainTextResult) {
             if (plain.isNullOrEmpty()) untimedLines(e.text, song.durationMs) else throw e
         }
