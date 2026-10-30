@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -23,6 +24,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -52,6 +55,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,9 +67,11 @@ import androidx.compose.ui.unit.dp
 import com.karaokemaker.data.Prefs
 import com.karaokemaker.data.Processor
 import com.karaokemaker.data.Song
+import com.karaokemaker.data.SongPackage
 import com.karaokemaker.data.SongStatus
 import com.karaokemaker.data.SongStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private data class ImportDraft(val uri: Uri, val fileName: String, val title: String, val artist: String)
@@ -124,8 +130,17 @@ fun LibraryScreen(
     }
     LaunchedEffect(pickedUri) {
         val uri = pickedUri ?: return@LaunchedEffect
-        draft = withContext(Dispatchers.IO) { readDraft(context, uri) }
         pickedUri = null
+        if (withContext(Dispatchers.IO) { SongPackage.isPackage(context, uri) }) {
+            val result = withContext(Dispatchers.IO) { runCatching { SongPackage.import(context, uri) } }
+            val text = result.fold(
+                onSuccess = { "Песня «${it.title}» добавлена" },
+                onFailure = { "Не удалось открыть песню: ${it.message}" },
+            )
+            Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+        } else {
+            draft = withContext(Dispatchers.IO) { readDraft(context, uri) }
+        }
     }
 
     Scaffold(
@@ -135,6 +150,9 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("KaraokeMaker", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = { picker.launch("*/*") }) {
+                        Icon(Icons.Default.Download, "Открыть полученную песню")
+                    }
                     IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Настройки") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -170,7 +188,8 @@ fun LibraryScreen(
             if (songs.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        "Добавьте mp3 — приложение уберёт основной вокал, оставит бэки и найдёт текст песни.",
+                        "Добавьте mp3 — приложение уберёт основной вокал, оставит бэки и найдёт текст песни.\n\n" +
+                            "Получили готовую песню от друга? Откройте файл .karaoke.zip или нажмите ⬇ вверху.",
                         color = Color.White.copy(alpha = 0.7f),
                     )
                 }
@@ -216,6 +235,8 @@ fun LibraryScreen(
 
 @Composable
 private fun SongCard(song: Song, onOpen: () -> Unit, onEdit: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val playable = song.status == SongStatus.READY || song.durationMs > 0
@@ -269,6 +290,23 @@ private fun SongCard(song: Song, onOpen: () -> Unit, onEdit: () -> Unit) {
                         leadingIcon = { Icon(Icons.Default.Edit, null) },
                         onClick = { menu = false; onEdit() },
                     )
+                    if (song.status == SongStatus.READY) {
+                        DropdownMenuItem(
+                            text = { Text("Поделиться") },
+                            leadingIcon = { Icon(Icons.Default.Share, null) },
+                            onClick = {
+                                menu = false
+                                scope.launch {
+                                    val intent = withContext(Dispatchers.IO) {
+                                        runCatching { SongPackage.shareIntent(context, song) }
+                                    }
+                                    intent.onSuccess { context.startActivity(it) }.onFailure {
+                                        Toast.makeText(context, "Не удалось подготовить файл: ${it.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Удалить") },
                         leadingIcon = { Icon(Icons.Default.Delete, null) },
