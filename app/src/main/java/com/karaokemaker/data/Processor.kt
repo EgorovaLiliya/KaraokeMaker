@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -105,6 +106,9 @@ object Processor {
                 lyricsFromVocals(song, plain)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: PlainTextResult) {
+                untimedLines(plain ?: e.text, song.durationMs) to
+                    "Текст есть, но без таймингов — ✎ → «Расставить время по ходу песни»"
             } catch (e: Exception) {
                 // The backing track is ready anyway; lyrics can be added in the editor.
                 val reason = e.message ?: e.javaClass.simpleName
@@ -150,6 +154,8 @@ object Processor {
         working: String,
         savedHash: String?,
         saveHash: (String?) -> Unit,
+        allowNoFiles: Boolean = false,
+        onDone: (Mvsep.Job) -> Unit = {},
     ): List<String> {
         var hash = savedHash
         if (hash == null) {
@@ -182,7 +188,8 @@ object Processor {
             }
             delay(5_000)
         }
-        if (job.files.isEmpty()) {
+        onDone(job)
+        if (job.files.isEmpty() && !allowNoFiles) {
             saveHash(null)
             throw IOException("MVSEP вернул пустой результат")
         }
@@ -265,6 +272,7 @@ object Processor {
     private suspend fun mvsepTranscript(song: Song, vocals: File): Transcript {
         val (algo, opt) = mvsepWhisperAlgorithm()
         val hashFile = SongStore.file(song, "whisper_hash.txt")
+        var raw: JSONObject? = null
         val names = runMvsepJob(
             id = song.id,
             audio = vocals,
@@ -274,20 +282,74 @@ object Processor {
             working = "MVSEP распознаёт текст…",
             savedHash = hashFile.takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null },
             saveHash = { h -> if (h == null) hashFile.delete() else hashFile.writeText(h) },
+            allowNoFiles = true,
+            onDone = { raw = it.raw },
         )
         hashFile.delete()
-        val files = names.map { SongStore.file(song, it) }
-        // Prefer formats with timestamps.
-        val ordered = files.sortedBy { f ->
-            when (f.extension.lowercase()) {
-                "json" -> 0; "srt" -> 1; "vtt" -> 2; "lrc" -> 3; "txt" -> 5; else -> 4
+        // Kept for diagnosis: the exact shape of MVSEP's Whisper answer is not documented.
+        raw?.let { SongStore.file(song, "whisper_response.json").writeText(it.toString(2)) }
+
+        val texts = mutableListOf<Pair<String, String>>() // file name hint to content
+        names.forEach { n -> texts += n to SongStore.file(song, n).readText() }
+        // The text may also come inside the JSON itself, or as links outside `files`.
+        val strings = mutableListOf<String>()
+        val nodes = mutableListOf<Any>()
+        fun walk(v: Any?) {
+            when (v) {
+                is JSONObject -> { nodes += v; v.keys().forEach { walk(v.opt(it)) } }
+                is JSONArray -> { nodes += v; for (i in 0 until v.length()) walk(v.opt(i)) }
+                is String -> strings += v
             }
         }
-        for (f in ordered) {
-            val tr = runCatching { SubtitleParser.parse(f.name, f.readText()) }.getOrNull() ?: continue
+        walk(raw?.opt("data"))
+        val audioExt = setOf("mp3", "wav", "flac", "m4a", "ogg", "aac", "opus")
+        strings.filter { it.startsWith("http") }
+            .filter { url -> url.substringBefore('?').substringAfterLast('.').lowercase() !in audioExt }
+            .distinct().take(5)
+            .forEachIndexed { i, url ->
+                val name = "text_url_${i}_" + url.substringBefore('?').substringAfterLast('/').takeLast(60)
+                    .replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
+                runCatching {
+                    withContext(Dispatchers.IO) { Http.download(url, SongStore.file(song, name)) }
+                    texts += name to SongStore.file(song, name).readText()
+                }
+            }
+        strings.filter { !it.startsWith("http") && it.length > 20 }.forEach { texts += "inline.txt" to it }
+        nodes.forEach { texts += "inline.json" to it.toString() }
+
+        fun rank(name: String) = when (name.substringAfterLast('.').lowercase()) {
+            "json" -> 0; "srt" -> 1; "vtt" -> 2; "lrc" -> 3; "txt" -> 5; else -> 4
+        }
+        for ((name, content) in texts.sortedBy { rank(it.first) }) {
+            val tr = runCatching { SubtitleParser.parse(name, content) }.getOrNull() ?: continue
             if (tr.words.isNotEmpty() || tr.segments.isNotEmpty()) return tr
         }
-        throw IOException("MVSEP вернул файлы без текста: ${names.joinToString()}")
+        // Only plain text: still useful, the user can time it with tap-to-sync.
+        val plain = texts.filter { (n, c) ->
+            val t = c.trim()
+            n.endsWith(".txt") && t.contains(' ') && !t.startsWith("{") && (n != "inline.txt" || t.length > 80)
+        }
+            .maxByOrNull { it.second.length }?.second
+        if (plain != null) throw PlainTextResult(plain.trim())
+        throw IOException(
+            "MVSEP (модель №$algo) не вернул текст. Ответ: " +
+                (raw?.optJSONObject("data")?.toString() ?: raw?.toString()).orEmpty().take(300)
+        )
+    }
+
+    /** Recognition gave words but no timing. */
+    class PlainTextResult(val text: String) : IOException("текст распознан без таймингов")
+
+    /** Splits an untimed recognised blob into singable lines spread over the song. */
+    private fun untimedLines(text: String, durationMs: Long): List<LyricLine> {
+        val lines = if (text.contains('\n')) {
+            Lrc.plainLines(text)
+        } else {
+            val words = text.split(Regex("\\s+")).filter { it.isNotBlank() }
+                .mapIndexed { i, w -> com.karaokemaker.lyrics.TimedText(w, i * 100L, i * 100L + 100) }
+            LineBuilder.fromTranscript(Transcript(words, emptyList())).map { it.text }
+        }
+        return Lrc.distribute(lines, durationMs)
     }
 
     /** Looks the Whisper model up in MVSEP's catalogue (cached), preferring the "use file as is" option. */
@@ -317,7 +379,11 @@ object Processor {
     /** Recognises the lead vocal; when [plain] is given, aligns that text instead of using recognised words. */
     suspend fun recognise(songId: String, plain: List<String>?, refresh: Boolean): List<LyricLine> = withContext(Dispatchers.IO) {
         val song = SongStore.get(songId) ?: throw IOException("Песня не найдена")
-        val tr = transcript(song, refresh)
-        if (plain.isNullOrEmpty()) LineBuilder.fromTranscript(tr) else LineBuilder.align(plain, tr, song.durationMs)
+        try {
+            val tr = transcript(song, refresh)
+            if (plain.isNullOrEmpty()) LineBuilder.fromTranscript(tr) else LineBuilder.align(plain, tr, song.durationMs)
+        } catch (e: PlainTextResult) {
+            if (plain.isNullOrEmpty()) untimedLines(e.text, song.durationMs) else throw e
+        }
     }
 }

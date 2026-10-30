@@ -18,7 +18,8 @@ object Mvsep {
     data class Field(val name: String, val label: String, val options: List<Option>)
     data class Algorithm(val id: Int, val name: String, val fields: List<Field>)
     data class StemFile(val name: String, val url: String)
-    data class Job(val status: String, val message: String, val files: List<StemFile>)
+    /** [raw] is the whole status response: some algorithms (Whisper) return their result outside `files`. */
+    data class Job(val status: String, val message: String, val files: List<StemFile>, val raw: JSONObject? = null)
 
     fun createJob(token: String, audio: File, sepType: Int, addOpt1: String?): String {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -53,7 +54,7 @@ object Mvsep {
                 is JSONObject -> f.keys().forEach { k -> f.optJSONObject(k)?.let { stem(it)?.let(files::add) } }
             }
             val message = data?.optString("message").orEmpty().ifEmpty { json.optString("message") }
-            return Job(json.optString("status").lowercase(), message, files)
+            return Job(json.optString("status").lowercase(), message, files, json)
         }
     }
 
