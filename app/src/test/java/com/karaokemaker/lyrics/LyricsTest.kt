@@ -50,3 +50,28 @@ class LyricsTest {
         assertEquals(listOf("Hello world", "Again here"), lines.map { it.text })
     }
 }
+
+class SubtitleParserTest {
+    @Test
+    fun readsSrt() {
+        val srt = "1\n00:00:05,120 --> 00:00:07,900\nПервая строка\n\n2\n00:00:08,000 --> 00:00:10,500\nВторая\nстрока\n"
+        val tr = SubtitleParser.parse("song.srt", srt)!!
+        assertEquals(2, tr.segments.size)
+        assertEquals(5_120L, tr.segments[0].startMs)
+        assertEquals("Вторая строка", tr.segments[1].text)
+        assertEquals(listOf("Первая строка", "Вторая строка"), LineBuilder.fromTranscript(tr).map { it.text })
+    }
+
+    @Test
+    fun readsWhisperJson() {
+        val json = """{"text":"x","segments":[{"start":1.5,"end":3.0,"text":" Hello there","words":[{"word":"Hello","start":1.5,"end":2.0},{"word":"there","start":2.1,"end":3.0}]}]}"""
+        val tr = SubtitleParser.parse("result.json", json)!!
+        assertEquals(1_500L, tr.segments[0].startMs)
+        assertEquals(2, tr.words.size)
+    }
+
+    @Test
+    fun plainTextIsNotATranscript() {
+        assertNull(SubtitleParser.parse("result.txt", "just some words"))
+    }
+}

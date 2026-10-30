@@ -54,6 +54,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
     var whisperKey by remember { mutableStateOf(Prefs.whisperKey) }
     var whisperModel by remember { mutableStateOf(Prefs.whisperModel) }
     var language by remember { mutableStateOf(Prefs.language) }
+    var recogniser by remember { mutableStateOf(Prefs.recogniser) }
     var preroll by remember { mutableStateOf(Prefs.prerollSec.toString()) }
     var algorithms by remember { mutableStateOf<List<Mvsep.Algorithm>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -68,6 +69,7 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
         Prefs.whisperKey = whisperKey
         Prefs.whisperModel = whisperModel.ifBlank { Prefs.DEFAULT_WHISPER_MODEL }
         Prefs.language = language
+        Prefs.recogniser = recogniser
         Prefs.prerollSec = preroll.toIntOrNull()?.coerceIn(0, 15) ?: 4
         onBack()
     }
@@ -103,17 +105,34 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
             Hint("По умолчанию: MelBand Karaoke — убирает основной вокал и оставляет бэк-вокал и музыку.")
 
             HorizontalDivider()
-            Section("Распознавание текста (Whisper)")
-            Hint(
-                "Нужно, если готового текста с таймингами нет в базе LRCLIB. Подходит любой OpenAI-совместимый сервис. " +
-                    "По умолчанию Groq: бесплатный ключ на console.groq.com → API Keys."
-            )
-            OutlinedTextField(
-                whisperKey, { whisperKey = it.trim() }, label = { Text("API-ключ") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(whisperUrl, { whisperUrl = it.trim() }, label = { Text("Адрес API") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(whisperModel, { whisperModel = it.trim() }, label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Section("Распознавание текста")
+            Hint("Нужно, если готового текста с таймингами нет в базе LRCLIB.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = recogniser == Prefs.RECOGNISER_MVSEP,
+                    onClick = { recogniser = Prefs.RECOGNISER_MVSEP },
+                    label = { Text("MVSEP (без VPN)") },
+                )
+                FilterChip(
+                    selected = recogniser == Prefs.RECOGNISER_OPENAI,
+                    onClick = { recogniser = Prefs.RECOGNISER_OPENAI },
+                    label = { Text("Groq / OpenAI") },
+                )
+            }
+            if (recogniser == Prefs.RECOGNISER_MVSEP) {
+                Hint("Whisper large-v3 на MVSEP с тем же токеном. Работает из России без VPN, но иногда ждёт в очереди.")
+            } else {
+                Hint(
+                    "Любой OpenAI-совместимый сервис. Groq: бесплатный ключ на console.groq.com. " +
+                        "Из России Groq и OpenAI работают только через VPN."
+                )
+                OutlinedTextField(
+                    whisperKey, { whisperKey = it.trim() }, label = { Text("API-ключ") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(whisperUrl, { whisperUrl = it.trim() }, label = { Text("Адрес API") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(whisperModel, { whisperModel = it.trim() }, label = { Text("Модель") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
             Text("Язык песен")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("" to "Авто", "ru" to "Русский", "en" to "English").forEach { (code, name) ->

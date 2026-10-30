@@ -8,6 +8,9 @@ object Prefs {
     const val DEFAULT_SEP_NAME = "MelBand Karaoke (lead/back vocals)"
     const val DEFAULT_WHISPER_URL = "https://api.groq.com/openai/v1"
     const val DEFAULT_WHISPER_MODEL = "whisper-large-v3"
+    const val DEFAULT_MVSEP_WHISPER = 32
+    const val RECOGNISER_MVSEP = "mvsep"
+    const val RECOGNISER_OPENAI = "openai"
 
     private lateinit var sp: SharedPreferences
 
@@ -45,6 +48,19 @@ object Prefs {
     var whisperModel: String
         get() = str("whisper_model", DEFAULT_WHISPER_MODEL)
         set(v) = put("whisper_model", v)
+
+    /** Where lyrics are recognised: MVSEP Whisper (works from Russia) or an OpenAI-compatible API. */
+    var recogniser: String
+        get() = str("recogniser", RECOGNISER_MVSEP)
+        set(v) = put("recogniser", v)
+
+    var mvsepWhisperId: Int
+        get() = sp.getInt("mvsep_whisper_id", 0)
+        set(v) = sp.edit().putInt("mvsep_whisper_id", v).apply()
+
+    var mvsepWhisperOpt: String
+        get() = str("mvsep_whisper_opt")
+        set(v) = put("mvsep_whisper_opt", v)
 
     /** "" = auto, otherwise ISO code such as "ru" or "en". */
     var language: String

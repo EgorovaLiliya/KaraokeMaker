@@ -99,7 +99,21 @@ object Processor {
             song = SongStore.get(id) ?: return
         }
         if (song.lyrics.isEmpty()) {
-            val (lines, source) = lyricsFromVocals(song, lrclib?.plain)
+            val plain = lrclib?.plain
+            val (lines, source) = try {
+                lyricsFromVocals(song, plain)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The backing track is ready anyway; lyrics can be added in the editor.
+                val reason = e.message ?: e.javaClass.simpleName
+                if (plain != null) {
+                    Lrc.distribute(Lrc.plainLines(plain), song.durationMs) to
+                        "Текст из LRCLIB без таймингов (распознать не удалось: $reason). Поправьте время в редакторе."
+                } else {
+                    emptyList<LyricLine>() to "Текст не распознан: $reason. Добавьте его в редакторе ✎"
+                }
+            }
             SongStore.update(id) { it.copy(lyrics = lines, lyricsSource = source) }
         }
     }
@@ -107,12 +121,40 @@ object Processor {
     private suspend fun separate(id: String) {
         val token = Prefs.mvsepToken
         if (token.isBlank()) throw IOException("Укажите API-токен MVSEP в настройках, чтобы убрать основной вокал")
-        var song = SongStore.get(id) ?: return
-        var hash = song.mvsepHash
+        val song = SongStore.get(id) ?: return
+        val names = runMvsepJob(
+            id = id,
+            audio = SongStore.file(song, song.originalFile),
+            sepType = Prefs.sepType,
+            addOpt1 = Prefs.addOpt1,
+            prefix = "stem",
+            working = "MVSEP отделяет основной вокал…",
+            savedHash = song.mvsepHash,
+            saveHash = { h -> SongStore.update(id) { it.copy(mvsepHash = h) } },
+        )
+        val (karaoke, vocals) = pickStems(names)
+        SongStore.update(id) { it.copy(stems = names, karaokeFile = karaoke ?: names.first(), vocalsFile = vocals) }
+    }
+
+    /**
+     * Uploads [audio] to MVSEP, waits for the job and downloads every output file into the song folder.
+     * The job hash is persisted through [saveHash], so a restarted app resumes waiting instead of re-uploading.
+     */
+    private suspend fun runMvsepJob(
+        id: String,
+        audio: File,
+        sepType: Int,
+        addOpt1: String?,
+        prefix: String,
+        working: String,
+        savedHash: String?,
+        saveHash: (String?) -> Unit,
+    ): List<String> {
+        var hash = savedHash
         if (hash == null) {
-            progress(id, "Загружаю песню на MVSEP…")
-            hash = Mvsep.createJob(token, SongStore.file(song, song.originalFile), Prefs.sepType, Prefs.addOpt1)
-            song = SongStore.update(id) { it.copy(mvsepHash = hash) }!!
+            progress(id, "Загружаю на MVSEP…")
+            hash = Mvsep.createJob(Prefs.mvsepToken, audio, sepType, addOpt1)
+            saveHash(hash)
         }
         val started = System.currentTimeMillis()
         var job: Mvsep.Job
@@ -120,17 +162,18 @@ object Processor {
             job = try {
                 Mvsep.getJob(hash)
             } catch (e: IOException) {
-                Mvsep.Job("retry", e.message.orEmpty(), emptyList())
+                Mvsep.Job("offline", "", emptyList())
             }
             when (job.status) {
                 "done" -> break
                 "failed", "error", "not_found" -> {
-                    SongStore.update(id) { it.copy(mvsepHash = null) }
-                    throw IOException("MVSEP не смог обработать песню: ${job.message.ifBlank { job.status }}")
+                    saveHash(null)
+                    throw IOException("MVSEP не смог обработать файл: ${job.message.ifBlank { job.status }}")
                 }
                 "waiting" -> progress(id, "В очереди MVSEP… ${job.message}".trim())
-                "processing" -> progress(id, "MVSEP отделяет основной вокал…")
+                "processing" -> progress(id, working)
                 "distributing", "merging" -> progress(id, "MVSEP: почти готово…")
+                "offline" -> progress(id, "Нет связи с MVSEP, повторяю… (проверьте интернет/VPN)")
                 else -> progress(id, "Ожидаю MVSEP… ${job.message}".trim())
             }
             if (System.currentTimeMillis() - started > 60 * 60_000L) {
@@ -138,16 +181,18 @@ object Processor {
             }
             delay(5_000)
         }
-        if (job.files.isEmpty()) throw IOException("MVSEP вернул пустой результат")
+        if (job.files.isEmpty()) {
+            saveHash(null)
+            throw IOException("MVSEP вернул пустой результат")
+        }
         val names = mutableListOf<String>()
         job.files.forEachIndexed { i, f ->
-            progress(id, "Скачиваю дорожки (${i + 1}/${job.files.size})…")
-            val safe = "stem_${i}_" + f.name.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").takeLast(80)
+            progress(id, "Скачиваю результат (${i + 1}/${job.files.size})…")
+            val safe = "${prefix}_${i}_" + f.name.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").takeLast(80)
             withContext(Dispatchers.IO) { Http.download(f.url, File(SongStore.dir(id), safe)) }
             names += safe
         }
-        val (karaoke, vocals) = pickStems(names)
-        SongStore.update(id) { it.copy(stems = names, karaokeFile = karaoke ?: names.first(), vocalsFile = vocals) }
+        return names
     }
 
     /** Guesses which MVSEP output is the backing track and which is the lead vocal from file names. */
@@ -177,12 +222,12 @@ object Processor {
     }
 
     private suspend fun lyricsFromVocals(song: Song, plain: String?): Pair<List<LyricLine>, String> {
-        if (Prefs.whisperKey.isBlank()) {
+        if (!canRecognise()) {
             if (plain != null) {
                 return Lrc.distribute(Lrc.plainLines(plain), song.durationMs) to
-                    "LRCLIB без таймингов — поправьте время в редакторе (или добавьте ключ распознавания)"
+                    "LRCLIB без таймингов — поправьте время в редакторе"
             }
-            return emptyList<LyricLine>() to "Текст не найден. Добавьте его в редакторе."
+            return emptyList<LyricLine>() to "Текст не найден. Добавьте его в редакторе ✎"
         }
         progress(song.id, "Распознаю текст по вокалу…")
         val tr = transcript(song)
@@ -193,17 +238,73 @@ object Processor {
         }
     }
 
+    private fun canRecognise() =
+        if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) Prefs.mvsepToken.isNotBlank() else Prefs.whisperKey.isNotBlank()
+
     /** Recognition result is cached in the song folder, so re-aligning edited text is free. */
-    private fun transcript(song: Song, refresh: Boolean = false): Transcript {
+    private suspend fun transcript(song: Song, refresh: Boolean = false): Transcript {
         val cache = SongStore.file(song, "transcript.json")
         if (!refresh && cache.exists()) {
             runCatching { return Transcript.fromJson(JSONObject(cache.readText())) }
         }
-        if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
         val source = SongStore.file(song, song.vocalsFile ?: song.originalFile)
-        val tr = Whisper.transcribe(source, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, Prefs.language)
+        val tr = if (Prefs.recogniser == Prefs.RECOGNISER_MVSEP) {
+            if (Prefs.mvsepToken.isBlank()) throw IOException("Укажите API-токен MVSEP в настройках")
+            mvsepTranscript(song, source)
+        } else {
+            if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
+            Whisper.transcribe(source, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, Prefs.language)
+        }
+        if (tr.words.isEmpty() && tr.segments.isEmpty()) throw IOException("распознавание не нашло слов")
         cache.writeText(tr.toJson().toString())
         return tr
+    }
+
+    /** Whisper large-v3 hosted on MVSEP: same token as separation, reachable without VPN. */
+    private suspend fun mvsepTranscript(song: Song, vocals: File): Transcript {
+        val (algo, opt) = mvsepWhisperAlgorithm()
+        val hashFile = SongStore.file(song, "whisper_hash.txt")
+        val names = runMvsepJob(
+            id = song.id,
+            audio = vocals,
+            sepType = algo,
+            addOpt1 = opt,
+            prefix = "text",
+            working = "MVSEP распознаёт текст…",
+            savedHash = hashFile.takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null },
+            saveHash = { h -> if (h == null) hashFile.delete() else hashFile.writeText(h) },
+        )
+        hashFile.delete()
+        val files = names.map { SongStore.file(song, it) }
+        // Prefer formats with timestamps.
+        val ordered = files.sortedBy { f ->
+            when (f.extension.lowercase()) {
+                "json" -> 0; "srt" -> 1; "vtt" -> 2; "lrc" -> 3; "txt" -> 5; else -> 4
+            }
+        }
+        for (f in ordered) {
+            val tr = runCatching { SubtitleParser.parse(f.name, f.readText()) }.getOrNull() ?: continue
+            if (tr.words.isNotEmpty() || tr.segments.isNotEmpty()) return tr
+        }
+        throw IOException("MVSEP вернул файлы без текста: ${names.joinToString()}")
+    }
+
+    /** Looks the Whisper model up in MVSEP's catalogue (cached), preferring the "use file as is" option. */
+    private fun mvsepWhisperAlgorithm(): Pair<Int, String?> {
+        if (Prefs.mvsepWhisperId > 0) return Prefs.mvsepWhisperId to Prefs.mvsepWhisperOpt.ifEmpty { null }
+        val algo = runCatching { Mvsep.algorithms() }.getOrNull()
+            ?.filter { "whisper" in it.name.lowercase() }
+            ?.maxByOrNull { if ("large" in it.name.lowercase()) 1 else 0 }
+            ?: return Prefs.DEFAULT_MVSEP_WHISPER to null
+        val options = algo.fields.firstOrNull { it.name == "add_opt1" }?.options.orEmpty()
+        // We already send the isolated lead vocal, so no extra vocal extraction is needed.
+        val asIs = options.firstOrNull { o ->
+            val l = o.label.lowercase()
+            listOf("original", "as is", "directly", "without", "оригинал", "без").any { it in l }
+        }
+        Prefs.mvsepWhisperId = algo.id
+        Prefs.mvsepWhisperOpt = asIs?.key.orEmpty()
+        return algo.id to asIs?.key
     }
 
     // ---- Used by the lyrics editor ----

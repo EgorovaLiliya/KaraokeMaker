@@ -33,6 +33,9 @@ object Whisper {
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 val msg = runCatching { JSONObject(text).getJSONObject("error").getString("message") }.getOrNull()
+                if (resp.code == 403) {
+                    throw IOException("сервис распознавания недоступен из вашей страны (HTTP 403). Включите VPN или выберите в настройках распознавание через MVSEP")
+                }
                 throw IOException("Распознавание: HTTP ${resp.code} ${msg ?: text.take(200)}")
             }
             return parse(JSONObject(text))

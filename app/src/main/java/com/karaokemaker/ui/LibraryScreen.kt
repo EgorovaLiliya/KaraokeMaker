@@ -234,12 +234,17 @@ private fun SongCard(song: Song, onOpen: () -> Unit, onEdit: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFFF8A80),
                     )
-                    SongStatus.READY -> Text(
-                        (if (song.karaokeFile != null) "Минус готов" else "Без минуса") +
-                            if (song.lyrics.isNotEmpty()) " · ${song.lyrics.size} строк текста" else " · нет текста",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.6f),
-                    )
+                    SongStatus.READY -> {
+                        Text(
+                            (if (song.karaokeFile != null) "Минус готов" else "Без минуса") +
+                                if (song.lyrics.isNotEmpty()) " · ${song.lyrics.size} строк текста" else " · нет текста",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.6f),
+                        )
+                        if (song.lyrics.isEmpty() && song.lyricsSource.isNotBlank()) {
+                            Text(song.lyricsSource, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFCC80))
+                        }
+                    }
                 }
             }
             if (song.status == SongStatus.ERROR) {
