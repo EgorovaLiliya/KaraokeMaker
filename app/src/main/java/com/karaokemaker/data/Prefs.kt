@@ -69,6 +69,11 @@ object Prefs {
         get() = sp.getInt("preroll", 4)
         set(v) = sp.edit().putInt("preroll", v).apply()
 
+    /** JSON list of previously connected TVs, see TvHistory. */
+    var savedTvs: String
+        get() = str("saved_tvs", "[]")
+        set(v) = put("saved_tvs", v)
+
     var lastTvAddress: String
         get() = str("last_tv")
         set(v) = put("last_tv", v)

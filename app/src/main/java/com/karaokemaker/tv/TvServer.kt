@@ -108,7 +108,7 @@ object TvServer {
         val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
         nsd = manager
         val info = NsdServiceInfo().apply {
-            serviceName = "KaraokeMaker TV (${Build.MODEL})"
+            serviceName = tvName()
             serviceType = Frames.SERVICE_TYPE
             setPort(port)
             // Phones try every address, so a TV with several interfaces is still reachable.
@@ -124,6 +124,8 @@ object TvServer {
         runCatching { manager.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
     }
 
+    private fun tvName() = "KaraokeMaker TV (${Build.MODEL})"
+
     private suspend fun <T> main(block: () -> T): T = withContext(Dispatchers.Main) { block() }
 
     private fun cacheFile(key: String) = File(cacheDir, key.replace(Regex("[^A-Za-z0-9._-]"), "_"))
@@ -133,6 +135,8 @@ object TvServer {
         val input = DataInputStream(BufferedInputStream(s.getInputStream()))
         val out = DataOutputStream(BufferedOutputStream(s.getOutputStream()))
         state.update { it.copy(client = s.inetAddress.hostAddress) }
+        // Lets the phone label a TV it reached by typed address.
+        runCatching { Frames.write(out, Frames.msg("hello").put("name", tvName())) }
         val ticker = launch {
             try {
                 while (isActive) {

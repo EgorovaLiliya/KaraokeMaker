@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.karaokemaker.data.Prefs
 import com.karaokemaker.tv.Frames
+import com.karaokemaker.tv.TvHistory
 import com.karaokemaker.tv.TvLink
 
 @Composable
@@ -41,6 +45,7 @@ fun CastDialog(onDismiss: () -> Unit) {
         onDispose { TvLink.stopDiscovery() }
     }
     val devices by TvLink.devices.collectAsState()
+    val saved by TvHistory.devices.collectAsState()
     val st by TvLink.state.collectAsState()
     var manual by remember { mutableStateOf(Prefs.lastTvAddress) }
 
@@ -66,6 +71,28 @@ fun CastDialog(onDismiss: () -> Unit) {
                     "Запустите KaraokeMaker на телевизоре (тот же APK). Телефон и ТВ должны быть в одной Wi-Fi сети.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                // Saved TVs that discovery has not found right now; found ones are listed below with fresh addresses.
+                val savedOnly = saved.filter { s -> devices.none { it.name == s.name } }
+                if (savedOnly.isNotEmpty()) {
+                    Text("Ранее подключённые", style = MaterialTheme.typography.bodySmall, color = AccentSoft)
+                    savedOnly.forEach { d ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { TvLink.connect(d) }, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.History, null)
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(d.name)
+                                    Text(
+                                        d.hosts.joinToString { "$it:${d.port}" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.6f),
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { TvHistory.forget(d) }) { Icon(Icons.Default.Close, "Забыть") }
+                        }
+                    }
+                }
                 if (devices.isEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)

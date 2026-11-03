@@ -85,6 +85,8 @@ object TvLink {
                     out = DataOutputStream(BufferedOutputStream(s.getOutputStream(), 64 * 1024))
                     val input = DataInputStream(BufferedInputStream(s.getInputStream()))
                     state.update { it.copy(connecting = false, error = null) }
+                    connectedHost = host
+                    TvHistory.remember(device, host)
                     send(Frames.msg("hello").put("name", Build.MODEL))
                     while (true) onMessage(Frames.read(input))
                 } catch (e: Exception) {
@@ -112,6 +114,7 @@ object TvLink {
     }
 
     @Volatile private var currentAttempt: Any? = null
+    @Volatile private var connectedHost: String? = null
 
     fun disconnect() {
         currentAttempt = null
@@ -133,6 +136,14 @@ object TvLink {
                 )
             }
             "need_file" -> pendingFile?.let { upload(it) }
+            "hello" -> {
+                val name = m.optString("name")
+                val host = connectedHost
+                if (name.isNotBlank() && host != null) {
+                    state.update { it.copy(device = it.device?.copy(name = name)) }
+                    TvHistory.rename(host, name)
+                }
+            }
             "loaded" -> state.update { it.copy(loadedKey = m.optString("key"), sendingKey = null, upload = null) }
         }
     }
