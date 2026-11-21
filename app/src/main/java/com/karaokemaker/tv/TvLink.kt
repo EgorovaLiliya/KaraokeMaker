@@ -155,7 +155,11 @@ object TvLink {
         }
     }
 
-    fun sendSong(song: Song, file: File, startMs: Long) {
+    /**
+     * [keepPosition]: switching between minus and original of the song already on the TV — the TV keeps playing the
+     * old track while the new one arrives and then continues from its own current position.
+     */
+    fun sendSong(song: Song, file: File, startMs: Long, keepPosition: Boolean = false) {
         val key = keyFor(song, file)
         pendingFile = file
         state.update { it.copy(sendingKey = key, loadedKey = null) }
@@ -167,6 +171,7 @@ object TvLink {
                 .put("lyrics", LyricLine.listToJson(song.lyrics))
                 .put("size", file.length())
                 .put("start", startMs)
+                .put("keepPosition", keepPosition)
         )
     }
 

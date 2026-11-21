@@ -84,9 +84,11 @@ fun PlayerScreen(songId: String, onBack: () -> Unit, onEdit: () -> Unit) {
     // Hand the song over to the TV once connected (and again after switching minus/original).
     LaunchedEffect(remote, key) {
         if (remote && tv.loadedKey != key && tv.sendingKey != key) {
-            val pos = LocalPlayer.position()
+            // The other track of this song is already on the TV: keep the TV's position, not the phone's.
+            val switching = tv.loadedKey?.startsWith(song.id + "_") == true
+            val pos = if (switching) TvLink.positionNow() else LocalPlayer.position()
             LocalPlayer.pause()
-            TvLink.sendSong(song, file, pos)
+            TvLink.sendSong(song, file, pos, keepPosition = switching)
         }
     }
     // Keep the TV's lyrics in sync after editing.

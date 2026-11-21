@@ -160,11 +160,17 @@ fun SettingsScreen(onBack: () -> Unit, onTvMode: () -> Unit) {
 
             HorizontalDivider()
             Section("Телевизор")
+            Hint("Телевизоры, к которым вы подключались, сохраняются сами и показываются в окне «Трансляция на ТВ».")
             Hint("На Android TV приложение само открывается как экран караоке. Этот режим — чтобы сделать экраном другой телефон или планшет.")
             OutlinedButton(onClick = onTvMode) {
                 Icon(Icons.Default.Tv, null)
                 Text("  Режим экрана для ТВ")
             }
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val version = remember {
+                runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+            }
+            Hint("Версия приложения: $version")
         }
     }
 

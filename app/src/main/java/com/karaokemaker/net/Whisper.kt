@@ -14,7 +14,8 @@ import java.io.IOException
 
 /** Speech recognition over any OpenAI-compatible /audio/transcriptions endpoint (Groq, OpenAI…). */
 object Whisper {
-    fun transcribe(audio: File, baseUrl: String, apiKey: String, model: String, language: String): Transcript {
+    /** [prompt]: known lyrics; Whisper uses it as context, which helps it spell the words the same way. */
+    fun transcribe(audio: File, baseUrl: String, apiKey: String, model: String, language: String, prompt: String = ""): Transcript {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("model", model)
             .addFormDataPart("response_format", "verbose_json")
@@ -22,6 +23,7 @@ object Whisper {
             .addFormDataPart("timestamp_granularities[]", "segment")
             .addFormDataPart("temperature", "0")
             .apply { if (language.isNotBlank()) addFormDataPart("language", language) }
+            .apply { if (prompt.isNotBlank()) addFormDataPart("prompt", prompt) }
             .addFormDataPart("file", audio.name, audio.asRequestBody("audio/mpeg".toMediaType()))
             .build()
         val req = Request.Builder()

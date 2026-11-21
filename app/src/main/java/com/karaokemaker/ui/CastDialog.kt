@@ -71,17 +71,18 @@ fun CastDialog(onDismiss: () -> Unit) {
                     "Запустите KaraokeMaker на телевизоре (тот же APK). Телефон и ТВ должны быть в одной Wi-Fi сети.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                // Saved TVs that discovery has not found right now; found ones are listed below with fresh addresses.
-                val savedOnly = saved.filter { s -> devices.none { it.name == s.name } }
-                if (savedOnly.isNotEmpty()) {
-                    Text("Ранее подключённые", style = MaterialTheme.typography.bodySmall, color = AccentSoft)
-                    savedOnly.forEach { d ->
+                if (saved.isNotEmpty()) {
+                    Text("Сохранённые телевизоры", style = MaterialTheme.typography.bodySmall, color = AccentSoft)
+                    saved.forEach { d ->
+                        // If the TV is also visible in the network right now, try its fresh addresses too.
+                        val found = devices.firstOrNull { it.name == d.name }
+                        val target = if (found != null) d.copy(hosts = (found.hosts + d.hosts).distinct(), port = found.port) else d
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { TvLink.connect(d) }, modifier = Modifier.weight(1f)) {
+                            TextButton(onClick = { TvLink.connect(target) }, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Default.History, null)
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.fillMaxWidth()) {
-                                    Text(d.name)
+                                    Text(d.name + if (found != null) "  · в сети" else "")
                                     Text(
                                         d.hosts.joinToString { "$it:${d.port}" },
                                         style = MaterialTheme.typography.bodySmall,
@@ -100,7 +101,7 @@ fun CastDialog(onDismiss: () -> Unit) {
                         Text("Ищу телевизоры…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                devices.forEach { d ->
+                devices.filter { d -> saved.none { it.name == d.name } }.forEach { d ->
                     TextButton(onClick = { TvLink.connect(d) }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.Tv, null)
                         Spacer(Modifier.width(8.dp))

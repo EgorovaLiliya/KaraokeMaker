@@ -33,10 +33,13 @@ import kotlin.math.max
  * synced lyrics from LRCLIB → lead vocal removal on MVSEP → (if needed) lyrics recognised from the lead vocal.
  */
 object Processor {
+    private const val USER_LYRICS = "user_lyrics.txt"
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
 
-    fun import(context: Context, uri: Uri, displayName: String, title: String, artist: String, language: String) {
+    /** [lyricsText] is optional: the user's own lyrics, timed against the recognised vocal instead of searching LRCLIB. */
+    fun import(context: Context, uri: Uri, displayName: String, title: String, artist: String, language: String, lyricsText: String = "") {
         val app = context.applicationContext
         val id = UUID.randomUUID().toString().replace("-", "").take(12)
         val ext = displayName.substringAfterLast('.', "mp3").lowercase().take(5).ifBlank { "mp3" }
@@ -45,6 +48,7 @@ object Processor {
             Song(id = id, title = title, artist = artist, durationMs = 0, originalFile = original, language = language, progress = "Копирую файл…")
         )
         start(id) {
+            if (lyricsText.isNotBlank()) File(SongStore.dir(id), USER_LYRICS).writeText(lyricsText.trim())
             val target = File(SongStore.dir(id), original)
             app.contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } }
                 ?: throw IOException("Не удалось открыть файл")
@@ -90,7 +94,8 @@ object Processor {
     private suspend fun process(id: String) {
         var song = SongStore.get(id) ?: return
         var lrclib: Lrclib.Result? = null
-        if (song.lyrics.isEmpty()) {
+        val userLyrics = SongStore.file(song, USER_LYRICS).takeIf { it.exists() }?.readText()?.ifBlank { null }
+        if (song.lyrics.isEmpty() && userLyrics == null) {
             progress(id, "Ищу текст песни в LRCLIB…")
             lrclib = runCatching { Lrclib.find(song.artist, song.title, (song.durationMs / 1000).toInt()) }.getOrNull()
             val found = lrclib
@@ -104,9 +109,10 @@ object Processor {
             song = SongStore.get(id) ?: return
         }
         if (song.lyrics.isEmpty()) {
-            val plain = lrclib?.plain
+            val plain = userLyrics ?: lrclib?.plain
+            val plainSource = if (userLyrics != null) "Ваш текст" else "LRCLIB"
             val (lines, source) = try {
-                lyricsFromVocals(song, plain)
+                lyricsFromVocals(song, plain, plainSource)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: PlainTextResult) {
@@ -117,7 +123,7 @@ object Processor {
                 val reason = e.message ?: e.javaClass.simpleName
                 if (plain != null) {
                     Lrc.distribute(Lrc.plainLines(plain), song.durationMs) to
-                        "Текст из LRCLIB без таймингов (распознать не удалось: $reason). Поправьте время в редакторе."
+                        "$plainSource без таймингов ($reason). ✎ → «Расставить время по ходу песни»"
                 } else {
                     emptyList<LyricLine>() to "Текст не распознан: $reason. Добавьте его в редакторе ✎"
                 }
@@ -232,18 +238,18 @@ object Processor {
         return karaoke to vocals
     }
 
-    private suspend fun lyricsFromVocals(song: Song, plain: String?): Pair<List<LyricLine>, String> {
+    private suspend fun lyricsFromVocals(song: Song, plain: String?, plainSource: String): Pair<List<LyricLine>, String> {
         if (!canRecognise()) {
             if (plain != null) {
                 return Lrc.distribute(Lrc.plainLines(plain), song.durationMs) to
-                    "LRCLIB без таймингов — поправьте время в редакторе"
+                    "$plainSource без таймингов — поправьте время в редакторе"
             }
             return emptyList<LyricLine>() to "Текст не найден. Добавьте его в редакторе ✎"
         }
         progress(song.id, "Распознаю текст по вокалу…")
         val tr = transcript(song)
         return if (plain != null) {
-            LineBuilder.alignChecked(Lrc.plainLines(plain), tr, song.durationMs) to "LRCLIB, время выставлено по вокалу"
+            LineBuilder.alignChecked(Lrc.plainLines(plain), tr, song.durationMs) to "$plainSource, время выставлено по вокалу"
         } else {
             LineBuilder.fromTranscript(tr) to "Распознано нейросетью — проверьте текст в редакторе"
         }
@@ -309,6 +315,11 @@ object Processor {
         return result
     }
 
+    /** Known lyrics as a recognition hint (OpenAI-compatible APIs accept a short "prompt"). */
+    private fun lyricsHint(song: Song): String =
+        (SongStore.file(song, USER_LYRICS).takeIf { it.exists() }?.readText()
+            ?: song.lyrics.joinToString("\n") { it.text }).take(600)
+
     private class Attempt(val label: String, val run: suspend () -> Transcript)
 
     private suspend fun recogniseAudio(song: Song, audio: File, tag: String, extract: Boolean, lang: String): Transcript =
@@ -319,7 +330,7 @@ object Processor {
         } else {
             if (Prefs.whisperKey.isBlank()) throw IOException("Укажите ключ распознавания речи в настройках")
             withContext(Dispatchers.IO) {
-                Whisper.transcribe(audio, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, lang)
+                Whisper.transcribe(audio, Prefs.whisperUrl, Prefs.whisperKey, Prefs.whisperModel, lang, lyricsHint(song))
             }
         }
 

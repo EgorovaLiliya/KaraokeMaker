@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -213,24 +216,41 @@ fun LibraryScreen(
     draft?.let { d ->
         var title by remember(d) { mutableStateOf(d.title) }
         var artist by remember(d) { mutableStateOf(d.artist) }
+        var lyricsText by remember(d) { mutableStateOf("") }
         var language by remember(d) { mutableStateOf(Song.guessLanguage(d.title, d.artist).ifEmpty { Prefs.language }) }
         AlertDialog(
             onDismissRequest = { draft = null },
             title = { Text("Новая песня") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("Название и исполнитель нужны, чтобы найти синхронизированный текст.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(artist, { artist = it }, label = { Text("Исполнитель") }, singleLine = true)
                     OutlinedTextField(title, { title = it }, label = { Text("Название") }, singleLine = true)
                     Text("Язык песни", style = MaterialTheme.typography.bodySmall)
                     LanguageChips(language) { language = it }
+                    OutlinedTextField(
+                        lyricsText,
+                        { lyricsText = it },
+                        label = { Text("Текст песни (необязательно)") },
+                        placeholder = { Text("Каждая строка песни — с новой строки") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp),
+                    )
+                    Text(
+                        "Если вставить текст, приложение не будет искать его в базе и угадывать слова: " +
+                            "оно расставит время для ваших строк по голосу певца.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.6f),
+                    )
                 }
             },
             confirmButton = {
                 TextButton(
                     enabled = title.isNotBlank(),
                     onClick = {
-                        Processor.import(context, d.uri, d.fileName, title.trim(), artist.trim(), language)
+                        Processor.import(context, d.uri, d.fileName, title.trim(), artist.trim(), language, lyricsText)
                         draft = null
                     },
                 ) { Text("Сделать караоке") }

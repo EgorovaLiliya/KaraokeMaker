@@ -236,11 +236,17 @@ object TvServer {
             artist = meta.optString("artist"),
             lyrics = LyricLine.listFromJson(meta.optJSONArray("lyrics")),
         )
+        val sameSong = meta.optBoolean("keepPosition") &&
+            state.value.song?.key?.substringBefore('_') == song.key.substringBefore('_')
         main {
             player?.let { p ->
+                // Minus ↔ original: continue from where the TV is now, not from where the phone asked earlier.
+                val start = if (sameSong) p.currentPosition else meta.optLong("start")
+                val play = sameSong && p.isPlaying
                 p.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
                 p.prepare()
-                p.seekTo(meta.optLong("start"))
+                p.seekTo(start)
+                if (play) p.play()
             }
         }
         state.update { it.copy(song = song) }
